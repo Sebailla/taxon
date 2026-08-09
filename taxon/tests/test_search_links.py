@@ -3,7 +3,7 @@ from urllib.parse import quote_plus
 
 from taxon.search_links import build_search_links, load_templates
 
-TEMPLATES = Path(__file__).parents[1] / "docs" / "sources" / "templates.md"
+TEMPLATES = Path(__file__).parents[2] / "docs" / "sources" / "templates.md"
 
 
 def test_load_templates_preserves_exact_order_and_verbatim_urls() -> None:

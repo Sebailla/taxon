@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Index, String, create_engine, inspect
+from sqlalchemy import Boolean, String, create_engine, inspect
 from sqlalchemy.orm import Session
 
 from taxon.schema import Base, SpeciesPath, Taxon
@@ -68,7 +68,10 @@ def test_species_path_has_complete_breadcrumb_markers_and_species_index() -> Non
     assert {foreign_key.target_fullname for foreign_key in columns["species_id"].foreign_keys} == {
         "taxa.source_id"
     }
-    assert any(
-        isinstance(index, Index) and tuple(column.name for column in index.columns) == ("species",)
-        for index in SpeciesPath.__table__.indexes
-    )
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    inspector = inspect(engine)
+    species_index_columns = {
+        tuple(index["column_names"]) for index in inspector.get_indexes("species_paths")
+    }
+    assert ("species",) in species_index_columns
