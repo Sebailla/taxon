@@ -1,0 +1,31 @@
+project: taxon
+context: |
+  Taxon is a species search dispatcher inspired by the WoRMS-inspired spreadsheet
+  the user maintains. Backend exposes a taxonomic hierarchy (Kingdom..Genus)
+  sourced from dataset-2011.txt plus a per-species search-links endpoint that
+  mirrors the HYPERLINK formulas of the source spreadsheet (Wikipedia, Google,
+  BHL, ResearchGate, Plos, Academia, Scielo, Scholar, Youtube, Zootaxa, Photos,
+  Sci-hub). Frontend is a React + Vite + Tailwind cascading-select UI.
+  Data pipeline: dataset-2011.txt (1.39M lines) -> hierarchical CSV -> SQLite.
+stack:
+  backend: python 3.11 + FastAPI + SQLAlchemy + SQLite
+  frontend: react 18 + vite + tailwindcss 3
+  data: dataset-2011.txt (WoRMS snapshot 2011)
+strict_tdd: true
+testing:
+  backend:
+    runner: pytest
+    layers: { unit: pytest, integration: fastapi.testclient }
+    coverage: pytest-cov
+  frontend:
+    runner: vitest + @testing-library/react
+    layers: { unit: vitest, component: testing-library }
+    e2e: playwright (optional)
+phase_rules:
+  proposal: required for any new capability or behavior change
+  spec: required for new capabilities, capabilities, or scenarios
+  design: required for new components or cross-module flow
+  tasks: required for any apply launch; includes review_workload_forecast
+  apply: tasks-driven batches with work-unit commits
+  verify: spec/design/task coverage check before archive
+  archive: required to close a change; syncs delta specs into openspec/specs/
