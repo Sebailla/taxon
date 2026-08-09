@@ -11,16 +11,16 @@ Lines changed: 600-900. Delivery strategy: ask-on-risk. 6 chained PRs; child bas
 
 ## Phase 1: Foundation / Infrastructure
 
-- [ ] 1.1 Create `taxon/pyproject.toml` deps (fastapi, uvicorn, sqlalchemy, pydantic, pytest, ruff, mypy).
-- [ ] 1.2 Create `taxon/.gitignore` excluding `data/`, `__pycache__/`, `.venv/`, `node_modules/`, `dist/`, `.pen`.
-- [ ] 1.3 RED test `taxon/tests/test_parser.py` with fixtures: †, =, ?, [unassigned], Candidatus, deep nesting.
-- [ ] 1.4 GREEN impl `taxon/taxon/parser.py` streaming indentation stack + marker extraction.
-- [ ] 1.5 RED test `taxon/tests/test_schema.py` for `Taxon`/`SpeciesPath` invariants + marker columns.
-- [ ] 1.6 GREEN impl `taxon/taxon/schema.py` SQLAlchemy models with marker columns + indexes.
-- [ ] 1.7 RED test `taxon/tests/test_import.py` for count/integrity against `dataset-2011.txt`.
-- [ ] 1.8 GREEN impl `taxon/taxon/import_data.py` batched streaming inserts against `dataset-2011.txt`.
-- [ ] 1.9 RED test `taxon/tests/test_search_links.py` for verbatim URL parity vs `templates.md` (incl. Sci-hub `https://sci-hub.ru/match/{q}`), `quote_plus(s, safe='')`.
-- [ ] 1.10 GREEN impl `taxon/taxon/search_links.py` parses `docs/sources/templates.md`, emits 12 URLs.
+- [x] 1.1 Create `taxon/pyproject.toml` deps (fastapi, uvicorn, sqlalchemy, pydantic, pytest, ruff, mypy).
+- [x] 1.2 Create `taxon/.gitignore` excluding `data/`, `__pycache__/`, `.venv/`, `node_modules/`, `dist/`, `.pen`.
+- [x] 1.3 RED test `taxon/tests/test_parser.py` with fixtures: †, =, ?, [unassigned], Candidatus, deep nesting.
+- [x] 1.4 GREEN impl `taxon/taxon/parser.py` streaming indentation stack + marker extraction.
+- [x] 1.5 RED test `taxon/tests/test_schema.py` for `Taxon`/`SpeciesPath` invariants + marker columns.
+- [x] 1.6 GREEN impl `taxon/taxon/schema.py` SQLAlchemy models with marker columns + indexes.
+- [x] 1.7 RED test `taxon/tests/test_import.py` for count/integrity against `dataset-2011.txt`.
+- [x] 1.8 GREEN impl `taxon/taxon/import_data.py` batched streaming inserts against `dataset-2011.txt`.
+- [x] 1.9 RED test `taxon/tests/test_search_links.py` for verbatim URL parity vs `templates.md` (incl. Sci-hub `https://sci-hub.ru/match/{q}`), `quote_plus(s, safe='')`.
+- [x] 1.10 GREEN impl `taxon/taxon/search_links.py` parses `docs/sources/templates.md`, emits 12 URLs.
 
 ## Phase 2: API Layer
 
