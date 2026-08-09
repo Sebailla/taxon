@@ -1,0 +1,197 @@
+"""Rebuild the SQLite taxonomy database from the WoRMS text dump."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import Engine, create_engine, event, insert, select
+from sqlalchemy.orm import Session
+
+from taxon.parser import ParsedTaxon, parse_taxa
+from taxon.schema import Base, SpeciesPath, Taxon
+
+DEFAULT_SOURCE = Path("/Users/sebailla/Developer/research/worm/dataset-2011.txt")
+DEFAULT_DATABASE = Path("data/taxon.db")
+BATCH_SIZE = 1_000
+MARKER_KEYS = ("is_synonym", "is_extinct", "is_uncertain", "is_unassigned")
+PATH_RANKS = ("kingdom", "phylum", "class", "order", "family", "genus")
+
+
+@dataclass(frozen=True)
+class ImportCounts:
+    total_taxa: int = 0
+    total_species: int = 0
+    synonym: int = 0
+    extinct: int = 0
+    uncertain: int = 0
+    unassigned: int = 0
+
+
+def import_dataset(
+    source_path: Path | str,
+    database_path: Path | str = DEFAULT_DATABASE,
+    *,
+    batch_size: int = BATCH_SIZE,
+) -> ImportCounts:
+    """Drop, recreate, and stream the complete dataset into SQLite."""
+    source = Path(source_path)
+    database = Path(database_path)
+    database.parent.mkdir(parents=True, exist_ok=True)
+    engine = _sqlite_engine(database)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+
+    source_to_database_id: dict[str, int] = {}
+    batch_source_ids: set[str] = set()
+    batch: list[dict[str, Any]] = []
+    counts = ImportCounts()
+    with source.open(encoding="utf-8", newline="") as lines:
+        for parent_source_id, parsed in parse_taxa(lines):
+            if parent_source_id in batch_source_ids:
+                _insert_taxon_batch(engine, batch, source_to_database_id)
+                batch.clear()
+                batch_source_ids.clear()
+            batch.append(_taxon_row(parsed, parent_source_id, source_to_database_id))
+            batch_source_ids.add(parsed["source_id"])
+            counts = _increment_counts(counts, parsed)
+            if len(batch) >= batch_size:
+                _insert_taxon_batch(engine, batch, source_to_database_id)
+                batch.clear()
+                batch_source_ids.clear()
+                if counts.total_taxa % 100_000 == 0:
+                    print(f"Imported {counts.total_taxa:,} taxa...", flush=True)
+    if batch:
+        _insert_taxon_batch(engine, batch, source_to_database_id)
+
+    _populate_species_paths(engine)
+    return counts
+
+
+def _sqlite_engine(database: Path) -> Engine:
+    engine = create_engine(f"sqlite:///{database}")
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection: Any, _: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
+
+
+def _taxon_row(
+    parsed: ParsedTaxon,
+    parent_source_id: str | None,
+    source_to_database_id: dict[str, int],
+) -> dict[str, Any]:
+    parent_id = source_to_database_id.get(parent_source_id) if parent_source_id else None
+    if parent_source_id is not None and parent_id is None:
+        raise ValueError(f"Parent {parent_source_id!r} was not imported before its child")
+    return {**parsed, "parent_id": parent_id}
+
+
+def _insert_taxon_batch(
+    engine: Engine,
+    rows: list[dict[str, Any]],
+    source_to_database_id: dict[str, int],
+) -> None:
+    with engine.begin() as connection:
+        connection.execute(insert(Taxon), rows)
+        source_ids = [row["source_id"] for row in rows]
+        inserted = connection.execute(
+            select(Taxon.source_id, Taxon.id).where(Taxon.source_id.in_(source_ids))
+        )
+        source_to_database_id.update(inserted.tuples().all())
+
+
+def _increment_counts(counts: ImportCounts, parsed: ParsedTaxon) -> ImportCounts:
+    return ImportCounts(
+        total_taxa=counts.total_taxa + 1,
+        total_species=counts.total_species + (parsed["rank"] == "species"),
+        synonym=counts.synonym + parsed["is_synonym"],
+        extinct=counts.extinct + parsed["is_extinct"],
+        uncertain=counts.uncertain + parsed["is_uncertain"],
+        unassigned=counts.unassigned + parsed["is_unassigned"],
+    )
+
+
+def _populate_species_paths(engine: Engine) -> None:
+    ancestors: dict[int, tuple[dict[str, str], dict[str, bool]]] = {}
+    paths: list[dict[str, Any]] = []
+    with Session(engine) as session:
+        taxa = session.scalars(select(Taxon).order_by(Taxon.id)).yield_per(BATCH_SIZE)
+        for taxon in taxa:
+            inherited_path: dict[str, str] = {}
+            inherited_markers = {key: False for key in MARKER_KEYS}
+            if taxon.parent_id is not None:
+                parent_state = ancestors.get(taxon.parent_id)
+                if parent_state is None:
+                    raise ValueError(f"Missing imported parent ID {taxon.parent_id}")
+                inherited_path = parent_state[0].copy()
+                inherited_markers = parent_state[1].copy()
+
+            rank_key = "class" if taxon.rank == "class" else taxon.rank
+            if rank_key in PATH_RANKS:
+                inherited_path[rank_key] = taxon.name
+            for key in MARKER_KEYS:
+                inherited_markers[key] = inherited_markers[key] or bool(getattr(taxon, key))
+            ancestors[taxon.id] = (inherited_path, inherited_markers)
+
+            if taxon.rank == "species":
+                paths.append(
+                    {
+                        "species_id": taxon.source_id,
+                        "kingdom": inherited_path.get("kingdom"),
+                        "phylum": inherited_path.get("phylum"),
+                        "class_name": inherited_path.get("class"),
+                        "order": inherited_path.get("order"),
+                        "family": inherited_path.get("family"),
+                        "genus": inherited_path.get("genus"),
+                        "species": taxon.name,
+                        "display_name": taxon.display_name,
+                        **inherited_markers,
+                    }
+                )
+                if len(paths) >= BATCH_SIZE:
+                    session.execute(insert(SpeciesPath), paths)
+                    session.commit()
+                    paths.clear()
+        if paths:
+            session.execute(insert(SpeciesPath), paths)
+            session.commit()
+
+
+def _print_counts(counts: ImportCounts, database: Path) -> None:
+    print(f"Database: {database}")
+    print(f"Total taxa: {counts.total_taxa}")
+    print(f"Total species: {counts.total_species}")
+    print(f"Synonym: {counts.synonym}")
+    print(f"Extinct: {counts.extinct}")
+    print(f"Uncertain: {counts.uncertain}")
+    print(f"Unassigned: {counts.unassigned}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "source",
+        nargs="?",
+        type=Path,
+        default=Path(os.environ.get("TAXON_DATASET", DEFAULT_SOURCE)),
+    )
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=Path(os.environ.get("TAXON_DATABASE", DEFAULT_DATABASE)),
+    )
+    args = parser.parse_args()
+    counts = import_dataset(args.source, args.database)
+    _print_counts(counts, args.database)
+
+
+if __name__ == "__main__":
+    main()
