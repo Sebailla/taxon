@@ -10,11 +10,15 @@ _LINE_PATTERN = re.compile(
     r"^(?P<label>.+?) \[(?P<rank>[^]]+)] \{ID=(?P<source_id>\S+)(?:\s+.*)?}$"
 )
 
-_AUTHOR_TOKEN = r"[A-Z][\w.\-]*"
+_AUTHOR_TOKEN = r"[A-Z][\w.\-'’]*"
 _INITIAL_TOKEN = r"[A-Z]\.?"
+_APOSTROPHE_PARTICLE = r"(?:d|D)[’']"
+_SPACE_PARTICLE = r"(?:de|du|van|von|da|di|do|la|le|los|las)\s+"
 _CONNECTOR_TOKEN = r"(?:\s+(?:in|non)\s+" + _AUTHOR_TOKEN + r")?"
 _AUTHOR_LIST = (
     r"(?:"
+    + r"(?:" + _APOSTROPHE_PARTICLE + r")?"
+    + r"(?:" + _SPACE_PARTICLE + r")?"
     + r"(?:(?:in|non)\s+)?" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN
     + r"(?:\s+" + _INITIAL_TOKEN + r")*"
     + r"(?:\s+" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN + r")?"
