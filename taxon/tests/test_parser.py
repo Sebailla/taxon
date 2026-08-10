@@ -78,3 +78,24 @@ def test_parser_strips_author_citation_from_canonical_name() -> None:
         by_source[source_id(103)]["display_name"]
         == "Apororhynchus hemignathi (Shipley, 1896) Shipley, 1899 [species]"
     )
+
+
+def test_parser_strips_particle_and_apostrophe_authors() -> None:
+    source = StringIO(
+        "Biota [superdomain] {ID=" + source_id(200) + "}\n"
+        "  Meyeria M'Coy, 1849 [genus] {ID=" + source_id(201) + "}\n"
+        "    Apororhynchus O'Connor, 1987 [species] {ID=" + source_id(202) + "}\n"
+        "    Enchytraeus ventriculosus d'Udekem, 1854 [species] {ID="
+        + source_id(203) + "}\n"
+        "    Tubificoides van Cleave, 1916 [genus] {ID=" + source_id(204) + "}\n"
+        "    Acanthocephalus von Oken, 1817 [genus] {ID=" + source_id(205) + "}\n"
+    )
+
+    parsed = list(parse_taxa(source))
+
+    by_source = {p["source_id"]: p for _, p in parsed}
+    assert by_source[source_id(201)]["name"] == "Meyeria"
+    assert by_source[source_id(202)]["name"] == "Apororhynchus"
+    assert by_source[source_id(203)]["name"] == "Enchytraeus ventriculosus"
+    assert by_source[source_id(204)]["name"] == "Tubificoides"
+    assert by_source[source_id(205)]["name"] == "Acanthocephalus"
