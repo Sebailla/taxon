@@ -20,7 +20,13 @@ def test_parser_extracts_markers_and_preserves_display_name() -> None:
 
     parsed = list(parse_taxa(source))
 
-    assert [parent for parent, _ in parsed] == [None, source_id(1), source_id(2), source_id(2), source_id(2)]
+    assert [parent for parent, _ in parsed] == [
+        None,
+        source_id(1),
+        source_id(2),
+        source_id(2),
+        source_id(2),
+    ]
     assert parsed[1][1]["name"] == "Animalia"
     assert parsed[1][1]["display_name"] == "†Animalia [kingdom]"
     assert parsed[1][1]["is_extinct"] is True
@@ -33,7 +39,7 @@ def test_parser_handles_candidatus_and_deep_irregular_nesting() -> None:
     source = StringIO(
         "Biota [superdomain] {ID=" + source_id(10) + "}\n"
         "  Bacteria [kingdom] {ID=" + source_id(11) + "}\n"
-        "      \"Candidatus Pelagibacter ubique\" [species] {ID=" + source_id(12) + "}\n"
+        '      "Candidatus Pelagibacter ubique" [species] {ID=' + source_id(12) + "}\n"
         "    Proteobacteria [phylum] {ID=" + source_id(13) + "}\n"
     )
 
@@ -58,10 +64,12 @@ def test_parser_strips_author_citation_from_canonical_name() -> None:
         "  Acanthocephala Rudolphi, 1808 [phylum] {ID=" + source_id(101) + "}\n"
         "    Apororhynchus aculeatus Meyer, 1931 [species] {ID=" + source_id(102) + "}\n"
         "    Apororhynchus hemignathi (Shipley, 1896) Shipley, 1899 [species] {ID="
-        + source_id(103) + "}\n"
+        + source_id(103)
+        + "}\n"
         "    Acanthogyrus (Acanthosentis) adriaticus Amin, 2005 [species] {ID="
-        + source_id(104) + "}\n"
-        "    \"Candidatus Pelagibacter ubique\" [species] {ID=" + source_id(105) + "}\n"
+        + source_id(104)
+        + "}\n"
+        '    "Candidatus Pelagibacter ubique" [species] {ID=' + source_id(105) + "}\n"
     )
 
     parsed = list(parse_taxa(source))
@@ -85,8 +93,7 @@ def test_parser_strips_particle_and_apostrophe_authors() -> None:
         "Biota [superdomain] {ID=" + source_id(200) + "}\n"
         "  Meyeria M'Coy, 1849 [genus] {ID=" + source_id(201) + "}\n"
         "    Apororhynchus O'Connor, 1987 [species] {ID=" + source_id(202) + "}\n"
-        "    Enchytraeus ventriculosus d'Udekem, 1854 [species] {ID="
-        + source_id(203) + "}\n"
+        "    Enchytraeus ventriculosus d'Udekem, 1854 [species] {ID=" + source_id(203) + "}\n"
         "    Tubificoides van Cleave, 1916 [genus] {ID=" + source_id(204) + "}\n"
         "    Acanthocephalus von Oken, 1817 [genus] {ID=" + source_id(205) + "}\n"
     )

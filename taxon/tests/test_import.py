@@ -66,7 +66,9 @@ def test_import_is_idempotent_and_batches_real_parser_rows(tmp_path: Path) -> No
         assert session.scalar(select(func.count()).select_from(SpeciesPath)) == 2
         synonym = session.scalar(select(Taxon).where(Taxon.source_id == "urn:9"))
         assert synonym is not None
-        assert synonym.parent_id == session.scalar(select(Taxon.id).where(Taxon.source_id == "urn:8"))
+        assert synonym.parent_id == session.scalar(
+            select(Taxon.id).where(Taxon.source_id == "urn:8")
+        )
 
 
 def _write_wide_fixture(path: Path, *, kingdoms: int, species_per_genus: int) -> int:
@@ -156,7 +158,9 @@ def test_species_paths_projection_peak_memory_is_bounded(tmp_path: Path) -> None
     tracemalloc.stop()
 
     with project_engine.connect() as connection:
-        species_count = connection.execute(select(func.count()).select_from(SpeciesPath)).scalar_one()
+        species_count = connection.execute(
+            select(func.count()).select_from(SpeciesPath)
+        ).scalar_one()
     assert species_count == 300 * 50
 
     assert total > 10_000, "fixture should be at least 10k taxa to exercise the bound"

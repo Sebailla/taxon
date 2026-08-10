@@ -45,9 +45,7 @@ def load_templates(path: Path | str) -> tuple[SearchTemplate, ...]:
     return tuple(templates)
 
 
-def build_search_links(
-    species: str, templates: Iterable[SearchTemplate]
-) -> tuple[SearchLink, ...]:
+def build_search_links(species: str, templates: Iterable[SearchTemplate]) -> tuple[SearchLink, ...]:
     """Substitute one encoded species query into each ordered template."""
     encoded = quote_plus(species, safe="")
     return tuple(

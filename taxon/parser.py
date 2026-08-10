@@ -17,17 +17,33 @@ _SPACE_PARTICLE = r"(?:de|du|van|von|da|di|do|la|le|los|las)\s+"
 _CONNECTOR_TOKEN = r"(?:\s+(?:in|non)\s+" + _AUTHOR_TOKEN + r")?"
 _AUTHOR_LIST = (
     r"(?:"
-    + r"(?:" + _APOSTROPHE_PARTICLE + r")?"
-    + r"(?:" + _SPACE_PARTICLE + r")?"
-    + r"(?:(?:in|non)\s+)?" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN
-    + r"(?:\s+" + _INITIAL_TOKEN + r")*"
-    + r"(?:\s+" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN + r")?"
+    + r"(?:"
+    + _APOSTROPHE_PARTICLE
+    + r")?"
+    + r"(?:"
+    + _SPACE_PARTICLE
+    + r")?"
+    + r"(?:(?:in|non)\s+)?"
+    + _AUTHOR_TOKEN
+    + _CONNECTOR_TOKEN
+    + r"(?:\s+"
+    + _INITIAL_TOKEN
+    + r")*"
+    + r"(?:\s+"
+    + _AUTHOR_TOKEN
+    + _CONNECTOR_TOKEN
+    + r")?"
     + r"(?:"
     + r"(?:\s*,\s*|\s+(?:&|and)\s+)"
     + _AUTHOR_TOKEN
     + _CONNECTOR_TOKEN
-    + r"(?:\s+" + _INITIAL_TOKEN + r")*"
-    + r"(?:\s+" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN + r")?"
+    + r"(?:\s+"
+    + _INITIAL_TOKEN
+    + r")*"
+    + r"(?:\s+"
+    + _AUTHOR_TOKEN
+    + _CONNECTOR_TOKEN
+    + r")?"
     + r")*"
     + r")"
 )
@@ -36,9 +52,12 @@ _CITATION_PARENS_PLUS_AUTHOR = r"\s*" + _PARENS_CITATION + r"\s+" + _AUTHOR_LIST
 _CITATION_PARENS_ALONE = r"\s*" + _PARENS_CITATION
 _CITATION_AUTHOR_ALONE = r"\s+" + _AUTHOR_LIST + r"\s*,\s*\d{4}"
 _TRAILING_CITATION = re.compile(
-    r"(?:" + _CITATION_PARENS_PLUS_AUTHOR
-    + r"|" + _CITATION_PARENS_ALONE
-    + r"|" + _CITATION_AUTHOR_ALONE
+    r"(?:"
+    + _CITATION_PARENS_PLUS_AUTHOR
+    + r"|"
+    + _CITATION_PARENS_ALONE
+    + r"|"
+    + _CITATION_AUTHOR_ALONE
     + r")\s*$"
 )
 
@@ -81,15 +100,18 @@ def parse_taxa(lines: Iterable[str]) -> Iterator[tuple[str | None, ParsedTaxon]]
             stack.pop()
         parent_id = stack[-1][1] if stack else None
 
-        yield parent_id, ParsedTaxon(
-            source_id=source_id,
-            rank=rank,
-            name=canonical,
-            display_name=f"{label} [{rank}]",
-            is_synonym=markers["is_synonym"],
-            is_extinct=markers["is_extinct"],
-            is_uncertain=markers["is_uncertain"],
-            is_unassigned=markers["is_unassigned"],
+        yield (
+            parent_id,
+            ParsedTaxon(
+                source_id=source_id,
+                rank=rank,
+                name=canonical,
+                display_name=f"{label} [{rank}]",
+                is_synonym=markers["is_synonym"],
+                is_extinct=markers["is_extinct"],
+                is_uncertain=markers["is_uncertain"],
+                is_unassigned=markers["is_unassigned"],
+            ),
         )
         stack.append((indent_level, source_id))
 
