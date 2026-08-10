@@ -21,7 +21,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class _ORMBase(BaseModel):
-    """Common config for response models that may be populated from ORM rows."""
+    """Common config for response models that may be populated from ORM rows.
+
+    ``from_attributes=True`` lets endpoints construct the model directly
+    from a SQLAlchemy row (``Model.model_validate(row)``). The class
+    columns of ``SpeciesPath`` (``class_name``, ``order_name``) match
+    these field names so no alias is required.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,15 +57,18 @@ class SpeciesPathResponse(_ORMBase):
 
     Ranks that did not exist in the source lineage surface as ``None``;
     ``species`` itself is always present and is the canonical lookup key.
+
+    The public field names match the SQLAlchemy columns (``class_name``,
+    ``order_name``). ``class`` and ``order`` shadow Python built-ins, so
+    the column names already do the work — JSON consumers see the same
+    strings the DB stores.
     """
 
     id: int
     kingdom: str | None = None
     phylum: str | None = None
-    # Python forbids ``class`` as an attribute name; the SQLAlchemy column is
-    # ``class_name`` and the JSON field is also ``class_name`` for parity.
-    class_name: str | None = Field(default=None, alias="class_")
-    order_name: str | None = Field(default=None, alias="order_")
+    class_name: str | None = None
+    order_name: str | None = None
     family: str | None = None
     genus: str | None = None
     species: Annotated[str, Field(min_length=1)]
@@ -69,8 +78,6 @@ class SpeciesPathResponse(_ORMBase):
     is_extinct: bool = False
     is_uncertain: bool = False
     is_unassigned: bool = False
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class HealthResponse(_ORMBase):

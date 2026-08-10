@@ -14,7 +14,7 @@ lives in Sub-PRs 2B and 2C and is deliberately not exercised here.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -64,14 +64,37 @@ def test_openapi_includes_healthz_path() -> None:
     assert schema["paths"]["/healthz"]["get"]["responses"]["200"] is not None
 
 
+def _collect_paths(app: FastAPI) -> set[str]:
+    """Recursively gather every concrete path mounted on ``app``.
+
+    FastAPI wraps included routers in a private ``_IncludedRouter`` node
+    that does not expose ``.path`` directly; the underlying ``APIRouter``
+    is reachable via ``.original_router``. Walk both shapes.
+    """
+    paths: set[str] = set()
+    pending: list[object] = list(app.routes)
+    while pending:
+        route = pending.pop()
+        cls = type(route).__name__
+        if cls == "APIRoute":
+            # Every concrete APIRoute exposes ``path`` at runtime.
+            paths.add(route.path)  # type: ignore[attr-defined]
+            continue
+        inner = getattr(route, "original_router", None)
+        if inner is not None and hasattr(inner, "routes"):
+            pending.extend(inner.routes)
+
+    return paths
+
+
 def test_api_router_is_registered_under_api_prefix() -> None:
     app = _build_app()
 
+    paths = _collect_paths(app)
     # Sub-PR 2A only registers the router with the `/api` prefix; 2B/2C add
-    # concrete routes. The prefix must exist on at least one route.
-    assert any(
-        route.path.startswith("/api") for route in app.routes if hasattr(route, "path")
-    )
+    # concrete routes. The placeholder `/_meta` endpoint proves the prefix
+    # is wired before any real endpoint exists.
+    assert any(path.startswith("/api") for path in paths)
 
 
 def test_health_response_schema_is_literal_ok() -> None:
@@ -122,8 +145,8 @@ def test_species_path_response_uses_canonical_names_for_lookup() -> None:
         id=100,
         kingdom="Animalia",
         phylum="Acanthocephala",
-        class_="Archiacanthocephala",
-        order_="Acanthogyrida",
+        class_name="Archiacanthocephala",
+        order_name="Acanthogyrida",
         family="Acanthogyridae",
         genus="Acanthogyrus",
         species="Acanthogyrus malawiensis",
@@ -142,6 +165,8 @@ def test_species_path_response_uses_canonical_names_for_lookup() -> None:
     # Every rank that anchors a breadcrumb hop is present.
     assert breadcrumb.kingdom == "Animalia"
     assert breadcrumb.genus == "Acanthogyrus"
+    assert breadcrumb.class_name == "Archiacanthocephala"
+    assert breadcrumb.order_name == "Acanthogyrida"
 
 
 def test_marker_flags_default_to_false() -> None:
@@ -162,8 +187,8 @@ def test_marker_flags_default_to_false() -> None:
         id=2,
         kingdom="Animalia",
         phylum=None,
-        class_=None,
-        order_=None,
+        class_name=None,
+        order_name=None,
         family=None,
         genus="Foo",
         species="Foo bar",
@@ -186,7 +211,7 @@ def test_error_response_with_candidates_optional() -> None:
     ]
     with_candidates = ErrorResponse(detail="ambiguous", candidates=candidates)
     assert with_candidates.candidates is not None
-    assert cast(list[CandidateRef], with_candidates.candidates)[0].breadcrumb == [
+    assert with_candidates.candidates[0].breadcrumb == [
         "Animalia",
         "Acanthocephala",
         "Foo",
@@ -202,7 +227,7 @@ def test_error_response_with_candidates_optional() -> None:
 )
 def test_schema_rejects_empty_canonical_names(model: type, kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError):
-        model(  # type: ignore[call-arg]
+        cast(Any, model)(
             id=1,
             rank="species",
             parent_id=None,
