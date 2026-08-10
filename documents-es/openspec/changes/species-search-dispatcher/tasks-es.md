@@ -11,16 +11,16 @@ Líneas modificadas: 600-900. Estrategia de entrega: ask-on-risk. 6 PRs encadena
 
 ## Fase 1: Cimiento / Infraestructura
 
-- [ ] 1.1 Crear `taxon/pyproject.toml` con deps (fastapi, uvicorn, sqlalchemy, pydantic, pytest, ruff, mypy).
-- [ ] 1.2 Crear `taxon/.gitignore` excluyendo `data/`, `__pycache__/`, `.venv/`, `node_modules/`, `dist/`, `.pen`.
-- [ ] 1.3 Prueba RED `taxon/tests/test_parser.py` con fixtures: †, =, ?, [unassigned], Candidatus, anidamiento profundo.
-- [ ] 1.4 Impl GREEN `taxon/taxon/parser.py` pila de indentación streaming + extracción de marcadores.
-- [ ] 1.5 Prueba RED `taxon/tests/test_schema.py` invariantes `Taxon`/`SpeciesPath` + columnas de marcadores.
-- [ ] 1.6 Impl GREEN `taxon/taxon/schema.py` modelos SQLAlchemy con columnas de marcadores + índices.
-- [ ] 1.7 Prueba RED `taxon/tests/test_import.py` para conteo/integridad sobre `dataset-2011.txt`.
-- [ ] 1.8 Impl GREEN `taxon/taxon/import_data.py` inserciones por lotes en streaming contra `dataset-2011.txt`.
-- [ ] 1.9 Prueba RED `taxon/tests/test_search_links.py` paridad URL verbatim vs `templates.md` (incl. Sci-hub `https://sci-hub.ru/match/{q}`), `quote_plus(s, safe='')`.
-- [ ] 1.10 Impl GREEN `taxon/taxon/search_links.py` parsea `docs/sources/templates.md`, emite 12 URLs.
+- [x] 1.1 Crear `taxon/pyproject.toml` con deps (fastapi, uvicorn, sqlalchemy, pydantic, pytest, ruff, mypy).
+- [x] 1.2 Crear `taxon/.gitignore` excluyendo `data/`, `__pycache__/`, `.venv/`, `node_modules/`, `dist/`, `.pen`.
+- [x] 1.3 Prueba RED `taxon/tests/test_parser.py` con fixtures: †, =, ?, [unassigned], Candidatus, anidamiento profundo.
+- [x] 1.4 Impl GREEN `taxon/taxon/parser.py` pila de indentación streaming + extracción de marcadores.
+- [x] 1.5 Prueba RED `taxon/tests/test_schema.py` invariantes `Taxon`/`SpeciesPath` + columnas de marcadores.
+- [x] 1.6 Impl GREEN `taxon/taxon/schema.py` modelos SQLAlchemy con columnas de marcadores + índices.
+- [x] 1.7 Prueba RED `taxon/tests/test_import.py` para conteo/integridad sobre `dataset-2011.txt`.
+- [x] 1.8 Impl GREEN `taxon/taxon/import_data.py` inserciones por lotes en streaming contra `dataset-2011.txt`.
+- [x] 1.9 Prueba RED `taxon/tests/test_search_links.py` paridad URL verbatim vs `templates.md` (incl. Sci-hub `https://sci-hub.ru/match/{q}`), `quote_plus(s, safe='')`.
+- [x] 1.10 Impl GREEN `taxon/taxon/search_links.py` parsea `docs/sources/templates.md`, emite 12 URLs.
 
 ## Fase 2: Capa API
 
