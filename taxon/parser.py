@@ -10,6 +10,34 @@ _LINE_PATTERN = re.compile(
     r"^(?P<label>.+?) \[(?P<rank>[^]]+)] \{ID=(?P<source_id>\S+)(?:\s+.*)?}$"
 )
 
+_AUTHOR_TOKEN = r"[A-Z][\w.\-]*"
+_INITIAL_TOKEN = r"[A-Z]\.?"
+_CONNECTOR_TOKEN = r"(?:\s+(?:in|non)\s+" + _AUTHOR_TOKEN + r")?"
+_AUTHOR_LIST = (
+    r"(?:"
+    + r"(?:(?:in|non)\s+)?" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN
+    + r"(?:\s+" + _INITIAL_TOKEN + r")*"
+    + r"(?:\s+" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN + r")?"
+    + r"(?:"
+    + r"(?:\s*,\s*|\s+(?:&|and)\s+)"
+    + _AUTHOR_TOKEN
+    + _CONNECTOR_TOKEN
+    + r"(?:\s+" + _INITIAL_TOKEN + r")*"
+    + r"(?:\s+" + _AUTHOR_TOKEN + _CONNECTOR_TOKEN + r")?"
+    + r")*"
+    + r")"
+)
+_PARENS_CITATION = r"\(\s*" + _AUTHOR_LIST + r"\s*,\s*\d{4}\s*\)"
+_CITATION_PARENS_PLUS_AUTHOR = r"\s*" + _PARENS_CITATION + r"\s+" + _AUTHOR_LIST + r"\s*,\s*\d{4}"
+_CITATION_PARENS_ALONE = r"\s*" + _PARENS_CITATION
+_CITATION_AUTHOR_ALONE = r"\s+" + _AUTHOR_LIST + r"\s*,\s*\d{4}"
+_TRAILING_CITATION = re.compile(
+    r"(?:" + _CITATION_PARENS_PLUS_AUTHOR
+    + r"|" + _CITATION_PARENS_ALONE
+    + r"|" + _CITATION_AUTHOR_ALONE
+    + r")\s*$"
+)
+
 
 class ParsedTaxon(TypedDict):
     source_id: str
@@ -40,7 +68,8 @@ def parse_taxa(lines: Iterable[str]) -> Iterator[tuple[str | None, ParsedTaxon]]
             raise ValueError(f"Line {line_number}: malformed taxon record")
 
         label = match.group("label")
-        markers, name = _extract_markers(label)
+        markers, residual = _extract_markers(label)
+        canonical = _split_canonical(residual)
         source_id = match.group("source_id")
         rank = match.group("rank")
 
@@ -51,7 +80,7 @@ def parse_taxa(lines: Iterable[str]) -> Iterator[tuple[str | None, ParsedTaxon]]
         yield parent_id, ParsedTaxon(
             source_id=source_id,
             rank=rank,
-            name=name,
+            name=canonical,
             display_name=f"{label} [{rank}]",
             is_synonym=markers["is_synonym"],
             is_extinct=markers["is_extinct"],
@@ -87,3 +116,37 @@ def _extract_markers(label: str) -> tuple[dict[str, bool], str]:
     if not remaining:
         raise ValueError("Taxon name cannot be empty")
     return markers, remaining
+
+
+_EMPTY_PARENS = re.compile(r"\s*\(\s*\)\s*")
+
+
+def _split_canonical(residual: str) -> str:
+    """Return the canonical (citation-free) name from the post-marker residual.
+
+    The verbatim source label still lives in ``display_name``. This function only
+    feeds the deduplication-friendly column used by the hierarchy and lookup
+    specs, which require case-insensitive matching against the bare name.
+
+    Rules (applied iteratively from the end of the string):
+
+    1. Strip a trailing parenthetical author-year block such as
+       ``(Shipley, 1896)`` or ``(Cable & Quick, 1954)``. If the parenthesised
+       group does not contain a four-digit year, it is part of the canonical
+       name (for example a subgenus like ``(Acanthosentis)``) and is kept.
+    2. Strip a trailing ``, Author(s), <year>`` citation. Author tokens may
+       include ``&``/``and`` conjunctions, ``in``/``non`` connectors, and
+       comma-separated multi-author lists.
+    """
+    result = residual
+    previous: str | None = None
+    while result != previous:
+        previous = result
+        match = _TRAILING_CITATION.search(result)
+        if match is not None:
+            result = result[: match.start()].rstrip()
+            continue
+        empty = _EMPTY_PARENS.search(result)
+        if empty is not None and empty.end() == len(result):
+            result = result[: empty.start()].rstrip()
+    return result
