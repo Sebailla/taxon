@@ -120,26 +120,43 @@ def _increment_counts(counts: ImportCounts, parsed: ParsedTaxon) -> ImportCounts
 
 
 def _populate_species_paths(engine: Engine) -> None:
-    ancestors: dict[int, tuple[dict[str, str], dict[str, bool]]] = {}
+    """Project each species row with its breadcrumb path.
+
+    Memory bound: the ``stack`` only holds the chain of currently-open
+    ancestors from the current taxon up to the root. Because the taxa are
+    visited in autoincrement order (depth-first in the source), each push is
+    followed by exactly one pop, so the stack size is bounded by the deepest
+    rank chain in the dataset (around thirty ranks in WoRMS), independent of
+    the total taxon count. The previous implementation kept a full
+    ``ancestors`` dict of every taxon ever visited, which grew linearly with
+    the input size.
+    """
+    stack: list[tuple[int, tuple[dict[str, str], dict[str, bool]]]] = []
     paths: list[dict[str, Any]] = []
     with Session(engine) as session:
         taxa = session.scalars(select(Taxon).order_by(Taxon.id)).yield_per(BATCH_SIZE)
         for taxon in taxa:
-            inherited_path: dict[str, str] = {}
-            inherited_markers = {key: False for key in MARKER_KEYS}
-            if taxon.parent_id is not None:
-                parent_state = ancestors.get(taxon.parent_id)
-                if parent_state is None:
+            while stack and stack[-1][0] != taxon.parent_id:
+                stack.pop()
+            if taxon.parent_id is None:
+                if stack:
+                    raise ValueError(
+                        f"Root-level taxon {taxon.id} found after non-empty ancestor stack"
+                    )
+                inherited_path: dict[str, str] = {}
+                inherited_markers = {key: False for key in MARKER_KEYS}
+            else:
+                if not stack:
                     raise ValueError(f"Missing imported parent ID {taxon.parent_id}")
-                inherited_path = parent_state[0].copy()
-                inherited_markers = parent_state[1].copy()
+                inherited_path = stack[-1][1][0].copy()
+                inherited_markers = stack[-1][1][1].copy()
 
             rank_key = "class" if taxon.rank == "class" else taxon.rank
             if rank_key in PATH_RANKS:
                 inherited_path[rank_key] = taxon.name
             for key in MARKER_KEYS:
                 inherited_markers[key] = inherited_markers[key] or bool(getattr(taxon, key))
-            ancestors[taxon.id] = (inherited_path, inherited_markers)
+            stack.append((taxon.id, (inherited_path, inherited_markers)))
 
             if taxon.rank == "species":
                 paths.append(
