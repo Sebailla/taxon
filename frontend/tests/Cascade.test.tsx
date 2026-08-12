@@ -151,6 +151,12 @@ describe("Cascade", () => {
     const kingdomSelect = await screen.findByRole("combobox", {
       name: /kingdom/i,
     });
+    // The <select> renders before the kingdoms fetch resolves, so it initially
+    // shows only "Loading children…". Wait for the Animalia <option> to exist
+    // before calling selectOptions — otherwise the action fires against a
+    // select whose option list does not yet contain "Animalia" and fails
+    // with "Value 'Animalia' not found in options" (CI flake under load).
+    await screen.findByRole("option", { name: "Animalia" });
 
     // Pick Animalia → wait for Chordata phyla to load.
     await user.selectOptions(kingdomSelect, "Animalia");
