@@ -298,7 +298,7 @@ export function Cascade(): JSX.Element {
         rows={state.species}
         status={state.speciesStatus}
         cursor={state.speciesCursor}
-        parentSegments={parentSegments(state.selected).slice(0, -1)}
+        parentSegments={parentSegments(state.selected)}
         breadcrumb={buildBreadcrumb(parentSegments(state.selected))}
       />
     </section>
