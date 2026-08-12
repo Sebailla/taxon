@@ -60,7 +60,7 @@ export function Toggles({ value, onChange }: TogglesProps): JSX.Element {
             aria-pressed={active}
             onClick={() => handleClick(toggle.key)}
             className={
-              "inline-flex items-center gap-2 rounded-chip border px-3 py-1 text-sm transition-colors " +
+              "inline-flex min-h-[44px] items-center gap-2 rounded-chip border px-3 py-1 text-sm transition-colors " +
               (active
                 ? "border-accent bg-blue-50 text-accent"
                 : "border-border bg-surface text-slate hover:bg-bg")
