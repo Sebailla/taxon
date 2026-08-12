@@ -38,8 +38,8 @@ def load_templates(path: Path | str) -> tuple[SearchTemplate, ...]:
                     url_template=match.group("url"),
                 )
             )
-    if len(templates) != 12:
-        raise ValueError(f"Expected exactly 12 search templates, found {len(templates)}")
+    if len(templates) != 13:
+        raise ValueError(f"Expected exactly 13 search templates, found {len(templates)}")
     if any(template.url_template.count("{q}") != 1 for template in templates):
         raise ValueError("Every search template must contain exactly one {q} placeholder")
     return tuple(templates)

@@ -22,11 +22,14 @@ def test_load_templates_preserves_exact_order_and_verbatim_urls() -> None:
         "Zootaxa",
         "Photos",
         "Sci-hub",
+        "Scribd",
     )
-    assert len(templates) == 12
-    assert templates[-1].url_template == "https://sci-hub.ru/match/{q}"
-    assert "&newwindow=1&sca_esv=" in templates[-2].url_template
-    assert "Q:1786299735760&source=lnt" in templates[-2].url_template
+    assert len(templates) == 13
+    assert templates[-1].source == "Scribd"
+    assert templates[-1].url_template == "https://es.scribd.com/search?query={q}"
+    assert templates[-2].url_template == "https://sci-hub.ru/match/{q}"
+    assert "&newwindow=1&sca_esv=" in templates[-3].url_template
+    assert "Q:1786299735760&source=lnt" in templates[-3].url_template
 
 
 def test_build_search_links_uses_quote_plus_for_every_template() -> None:
@@ -35,10 +38,12 @@ def test_build_search_links_uses_quote_plus_for_every_template() -> None:
 
     links = build_search_links(species, load_templates(TEMPLATES))
 
-    assert len(links) == 12
+    assert len(links) == 13
     assert all(link.url.count(encoded) == 1 for link in links)
     assert all("{q}" not in link.url for link in links)
     assert links[0].url == f"http://es.Wikipedia.org/wiki/Special:Search?search={encoded}"
-    assert links[-1].url == f"https://sci-hub.ru/match/{encoded}"
+    assert links[-1].url == f"https://es.scribd.com/search?query={encoded}"
+    assert links[-2].url == f"https://sci-hub.ru/match/{encoded}"
     assert links[0].source == "Wikipedia"
     assert links[0].label == "Wikipedia"
+    assert links[-1].source == "Scribd"
