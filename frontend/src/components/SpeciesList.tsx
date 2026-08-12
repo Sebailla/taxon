@@ -13,6 +13,7 @@ the API and offer a "Load more" affordance when ``cursor`` is set.
 */
 
 import type { TaxonResponse } from "../api";
+import { dispatchTaxonSelect } from "../events/taxonSelect";
 
 interface SpeciesListProps {
   rows: TaxonResponse[];
@@ -61,15 +62,11 @@ export function SpeciesList(props: SpeciesListProps): JSX.Element {
             <button
               type="button"
               onClick={() => {
-                window.dispatchEvent(
-                  new CustomEvent("taxon:select", {
-                    detail: {
-                      row,
-                      breadcrumb: props.breadcrumb,
-                      parentSegments: props.parentSegments,
-                    },
-                  }),
-                );
+                dispatchTaxonSelect({
+                  row,
+                  breadcrumb: props.breadcrumb,
+                  parentSegments: props.parentSegments,
+                });
               }}
               className="flex w-full items-center justify-between gap-3 rounded-btn border border-border bg-bg p-2 text-left hover:bg-surface"
             >
