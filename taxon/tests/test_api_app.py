@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from taxon.api.schemas import (
-    CandidateRef,
+    AmbiguityCandidate,
     ErrorResponse,
     HealthResponse,
     SpeciesPathResponse,
@@ -206,8 +206,18 @@ def test_error_response_with_candidates_optional() -> None:
     assert without.candidates is None
 
     candidates = [
-        CandidateRef(id=1, breadcrumb=["Animalia", "Acanthocephala", "Foo"]),
-        CandidateRef(id=2, breadcrumb=["Animalia", "Arthropoda", "Foo"]),
+        AmbiguityCandidate(
+            id=1,
+            canonical_name="Foo bar",
+            display_name="Foo bar",
+            breadcrumb=["Animalia", "Acanthocephala", "Foo"],
+        ),
+        AmbiguityCandidate(
+            id=2,
+            canonical_name="Foo baz",
+            display_name="Foo baz",
+            breadcrumb=["Animalia", "Arthropoda", "Foo"],
+        ),
     ]
     with_candidates = ErrorResponse(detail="ambiguous", candidates=candidates)
     assert with_candidates.candidates is not None
