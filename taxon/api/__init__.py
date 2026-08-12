@@ -1,10 +1,10 @@
 """FastAPI app factory and shared API-layer types.
 
 Sub-PR 2A wires the factory, lifespan, ``/healthz`` probe, and the
-``/api`` router placeholder. Sub-PRs 2B and 2C will register concrete
-routes against the same router. The exception types raised by 404 and 409
-handlers are defined here so endpoints in later sub-PRs can raise them
-without reaching across module boundaries.
+``/api`` router placeholder. Sub-PRs 2B and 2C register concrete routes
+against the same router. The HTTP-mapped exception classes live in
+:mod:`taxon.api.errors` and are re-exported here for backwards
+compatibility with callers that imported them from ``taxon.api``.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from taxon.api.errors import AmbiguousError, APIError, NotFoundError
 from taxon.api.router import router as api_router
 from taxon.api.schemas import ErrorResponse, HealthResponse
 
@@ -30,41 +31,6 @@ from taxon.api.schemas import ErrorResponse, HealthResponse
 # finds the imported dataset without any extra config.
 DEFAULT_DATABASE_URL = "sqlite:///./data/taxon.db"
 _DATA_DIR = Path("data")
-
-
-class APIError(Exception):
-    """Base class for HTTP-mapped domain errors raised by API endpoints."""
-
-    status_code: int = 500
-    detail: str = "internal server error"
-
-    def __init__(self, detail: str | None = None) -> None:
-        super().__init__(detail or self.detail)
-        if detail is not None:
-            self.detail = detail
-
-
-class NotFoundError(APIError):
-    """Resource was not found; maps to HTTP 404."""
-
-    status_code = 404
-    detail = "not found"
-
-
-class AmbiguousError(APIError):
-    """Lookup matched multiple rows; maps to HTTP 409.
-
-    The ``candidates`` payload is the breadcrumb list expected by the
-    ambiguity picker UI in Sub-PR 5; endpoints raise this with the
-    already-resolved list.
-    """
-
-    status_code = 409
-    detail = "ambiguous"
-
-    def __init__(self, candidates: list[dict[str, Any]], detail: str | None = None) -> None:
-        super().__init__(detail)
-        self.candidates = candidates
 
 
 @dataclass
