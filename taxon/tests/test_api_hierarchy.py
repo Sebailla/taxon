@@ -264,16 +264,22 @@ def test_species_endpoint_returns_direct_children_of_genus(seeded_app: FastAPI) 
 
     assert response.status_code == 200
     body = response.json()
-    names = [item["name"] for item in body]
+    # Sub-PR 2C wraps the species list in an envelope so the cursor
+    # has somewhere to live; the items array still carries the rows
+    # from Sub-PR 2B.
+    items = body["items"]
+    names = [item["name"] for item in items]
     # Two species under Girardinichthys, alphabetical.
     assert names == [
         "Girardinichthys multiradiatus",
         "Girardinichthys viviparus",
     ]
     # Every species row carries the rank marker and its parent genus id.
-    for item in body:
+    for item in items:
         assert item["rank"] == "species"
         assert item["parent_id"] is not None
+    # No pagination cursor when the genus has fewer than 500 species.
+    assert body["next_cursor"] is None
 
 
 def test_species_endpoint_404_when_genus_unknown(seeded_app: FastAPI) -> None:
@@ -329,11 +335,12 @@ def test_display_name_preserved_verbatim_in_lookup(seeded_app_custom: Any) -> No
             "Girardinichthys/species"
         ).json()
 
+    items = body["items"]
     # ``name`` is the canonical key without author citation.
-    assert body[0]["name"] == "Girardinichthys multiradiatus"
+    assert items[0]["name"] == "Girardinichthys multiradiatus"
     # ``display_name`` keeps the citation plus the rank suffix the parser
     # appends; it is verbatim from the source row.
-    assert body[0]["display_name"] == ("Girardinichthys multiradiatus (Meek, 1904) [species]")
+    assert items[0]["display_name"] == ("Girardinichthys multiradiatus (Meek, 1904) [species]")
 
 
 def test_path_resolution_walks_segment_by_segment(seeded_app: FastAPI) -> None:
@@ -392,6 +399,9 @@ def test_species_endpoint_preserves_marker_flags_from_db(
 ) -> None:
     """A species marked extinct or synonym must surface those flags in the
     response so the UI can filter without re-querying.
+
+    The default response is accepted-only, so we widen the result set
+    with ``include=extinct,synonyms`` to bring both marker classes in.
     """
     fixture = (
         "Biota [superdomain] {ID=urn:0}\n"
@@ -409,9 +419,10 @@ def test_species_endpoint_preserves_marker_flags_from_db(
     with _client(app) as client:
         body = client.get(
             "/api/Animalia/Chordata/Actinopterygii/Cyprinodontiformes/Goodeidae/"
-            "Girardinichthys/species"
+            "Girardinichthys/species",
+            params={"include": "extinct,synonyms"},
         ).json()
 
-    by_name = {item["name"]: item for item in body}
+    by_name = {item["name"]: item for item in body["items"]}
     assert by_name["Girardinichthys multiradiatus"]["is_extinct"] is True
     assert by_name["Girardinichthys viviparus"]["is_synonym"] is True
