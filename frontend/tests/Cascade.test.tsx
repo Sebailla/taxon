@@ -395,6 +395,169 @@ describe("Cascade with inclusion toggles", () => {
   });
 });
 
+// Regression: when the user clicks a species row, the Cascade
+// emits a ``taxon:select`` CustomEvent carrying ``parentSegments``.
+// The App component uses that array to build the
+// ``/{kingdom}/{phylum}/{class}/{order}/{family}/{genus}/{epithet}/links`` URL
+// the backend expects. The genus MUST be included in the array;
+// otherwise the backend returns 404 and the UI shows
+// "Could not load links."
+describe("Cascade emits taxon:select with the full path", () => {
+  it("includes the genus in parentSegments when a species is clicked", async () => {
+    mockFetchSequence([
+      mockFetchJson([kingdom(1, "Animalia")]),
+      mockFetchJson([
+        {
+          id: 10,
+          name: "Chordata",
+          display_name: "Chordata [phylum]",
+          rank: "phylum",
+          parent_id: 1,
+          is_synonym: false,
+          is_extinct: false,
+          is_uncertain: false,
+          is_unassigned: false,
+        },
+      ]),
+      mockFetchJson([
+        {
+          id: 20,
+          name: "Actinopterygii",
+          display_name: "Actinopterygii [class]",
+          rank: "class",
+          parent_id: 10,
+          is_synonym: false,
+          is_extinct: false,
+          is_uncertain: false,
+          is_unassigned: false,
+        },
+      ]),
+      mockFetchJson([
+        {
+          id: 21,
+          name: "Cyprinodontiformes",
+          display_name: "Cyprinodontiformes [order]",
+          rank: "order",
+          parent_id: 20,
+          is_synonym: false,
+          is_extinct: false,
+          is_uncertain: false,
+          is_unassigned: false,
+        },
+      ]),
+      mockFetchJson([
+        {
+          id: 30,
+          name: "Goodeidae",
+          display_name: "Goodeidae [family]",
+          rank: "family",
+          parent_id: 21,
+          is_synonym: false,
+          is_extinct: false,
+          is_uncertain: false,
+          is_unassigned: false,
+        },
+      ]),
+      mockFetchJson([
+        {
+          id: 40,
+          name: "Girardinichthys",
+          display_name: "Girardinichthys [genus]",
+          rank: "genus",
+          parent_id: 30,
+          is_synonym: false,
+          is_extinct: false,
+          is_uncertain: false,
+          is_unassigned: false,
+        },
+      ]),
+      mockFetchJson({
+        items: [
+          {
+            id: 50,
+            name: "Girardinichthys multiradiatus",
+            display_name: "Girardinichthys multiradiatus [species]",
+            rank: "species",
+            parent_id: 40,
+            is_synonym: false,
+            is_extinct: false,
+            is_uncertain: false,
+            is_unassigned: false,
+          },
+        ],
+        next_cursor: null,
+      }),
+    ]);
+
+    // Capture the taxon:select detail from the global CustomEvent
+    // the Cascade dispatches on click.
+    const captured: Array<{
+      row: TaxonResponse;
+      breadcrumb: string[];
+      parentSegments: string[];
+    }> = [];
+    const onSelect = (e: Event): void => {
+      captured.push(
+        (e as CustomEvent<{
+          row: TaxonResponse;
+          breadcrumb: string[];
+          parentSegments: string[];
+        }>).detail,
+      );
+    };
+    window.addEventListener("taxon:select", onSelect);
+
+    const user = userEvent.setup();
+    render(<Cascade />);
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: /kingdom/i }),
+      "Animalia",
+    );
+    await screen.findByRole("option", { name: "Chordata" });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /phylum/i }),
+      "Chordata",
+    );
+    await screen.findByRole("option", { name: "Actinopterygii" });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /class/i }),
+      "Actinopterygii",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /order/i }),
+      "Cyprinodontiformes",
+    );
+    await screen.findByRole("option", { name: "Goodeidae" });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /family/i }),
+      "Goodeidae",
+    );
+    await screen.findByRole("option", { name: "Girardinichthys" });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /genus/i }),
+      "Girardinichthys",
+    );
+
+    const speciesButton = await screen.findByText("Girardinichthys multiradiatus");
+    await user.click(speciesButton);
+
+    expect(captured).toHaveLength(1);
+    // The full breadcrumb from Kingdom down to Genus MUST be present;
+    // the App uses this to build /api/{path}/{genus}/{epithet}/links
+    // and a missing genus segment causes a backend 404.
+    expect(captured[0]?.parentSegments).toEqual([
+      "Animalia",
+      "Chordata",
+      "Actinopterygii",
+      "Cyprinodontiformes",
+      "Goodeidae",
+      "Girardinichthys",
+    ]);
+
+    window.removeEventListener("taxon:select", onSelect);
+  });
+});
+
 // AbortController behaviour: the test pins that a new parent
 // selection aborts the previous fetch. We assert this by counting
 // AbortController instances constructed by the Cascade.
