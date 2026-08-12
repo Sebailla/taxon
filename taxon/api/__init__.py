@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from taxon.api.errors import AmbiguousError, APIError, NotFoundError
 from taxon.api.router import router as api_router
-from taxon.api.schemas import ErrorResponse, HealthResponse
+from taxon.api.schemas import AmbiguityCandidate, ErrorResponse, HealthResponse
 
 # Default on-disk location for the SQLite database produced by ``import_data``.
 # Lives next to ``pyproject.toml`` so a single ``python -m taxon.main`` invocation
@@ -75,9 +75,23 @@ def _build_engine(database_url: str) -> Engine:
     return create_engine(database_url, connect_args=connect_args, future=True)
 
 
-def _error_response(status_code: int, detail: str, candidates: list[Any] | None) -> JSONResponse:
-    """Render an ``ErrorResponse`` body for the exception handlers."""
-    body = ErrorResponse(detail=detail, candidates=candidates).model_dump(exclude_none=True)
+def _error_response(
+    status_code: int,
+    detail: str,
+    candidates: list[Any] | None,
+) -> JSONResponse:
+    """Render an ``ErrorResponse`` body for the exception handlers.
+
+    The ``candidates`` payload is normalised through
+    :class:`AmbiguityCandidate` so the response shape stays consistent
+    even when the caller passes dicts with extra keys.
+    """
+    normalised = (
+        [AmbiguityCandidate.model_validate(c) for c in candidates]
+        if candidates is not None
+        else None
+    )
+    body = ErrorResponse(detail=detail, candidates=normalised).model_dump(exclude_none=True)
     return JSONResponse(status_code=status_code, content=body)
 
 
