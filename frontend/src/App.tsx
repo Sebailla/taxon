@@ -15,9 +15,9 @@ import { useEffect, useState } from "react";
 import type {
   SearchLinkItem,
   SpeciesLookupResponse,
-  TaxonResponse,
 } from "./api";
 import { fetchLinks } from "./api";
+import { TAXON_SELECT_EVENT, parseTaxonSelectEvent } from "./events/taxonSelect";
 import { Cascade } from "./components/Cascade";
 import { SpeciesLinks } from "./components/SpeciesLinks";
 import { Breadcrumb } from "./components/Breadcrumb";
@@ -31,14 +31,14 @@ export function App(): JSX.Element {
   const [parentSegments, setParentSegments] = useState<string[]>([]);
 
   // Listen for species selection: the Cascade emits a (row, breadcrumb)
-  // pair whenever the user clicks a species row.
+  // pair whenever the user clicks a species row. The detail is
+  // validated through a Zod schema in parseTaxonSelectEvent so a
+  // malformed event (from a future producer that drifted from the
+  // contract) cannot crash the App.
   useEffect(() => {
     const handler = (e: Event): void => {
-      const detail = (e as CustomEvent<{
-        row: TaxonResponse;
-        breadcrumb: string[];
-        parentSegments: string[];
-      }>).detail;
+      const detail = parseTaxonSelectEvent(e);
+      if (detail === null) return;
       setResolved({
         id: detail.row.id,
         canonical_name: detail.row.name,
@@ -53,8 +53,8 @@ export function App(): JSX.Element {
       });
       setParentSegments(detail.parentSegments);
     };
-    window.addEventListener("taxon:select", handler as EventListener);
-    return () => window.removeEventListener("taxon:select", handler as EventListener);
+    window.addEventListener(TAXON_SELECT_EVENT, handler);
+    return () => window.removeEventListener(TAXON_SELECT_EVENT, handler);
   }, []);
 
   // Load links whenever the resolved species or its parent path changes.
