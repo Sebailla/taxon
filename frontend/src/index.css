@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    @apply font-sans text-slate bg-bg antialiased;
+    line-height: 1.5;
+  }
+
+  /* Visible focus ring on every interactive element. The .pen
+     audit called out the focus-ring example as a positive finding;
+     we mirror it in the production CSS. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
