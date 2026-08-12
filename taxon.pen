@@ -1,0 +1,2984 @@
+{
+  "version": "2.17",
+  "children": [
+    {
+      "type": "frame",
+      "id": "ML5ji",
+      "x": 0,
+      "y": 0,
+      "name": "Component Shelf",
+      "fill": "#f8fafc",
+      "cornerRadius": 12,
+      "stroke": "$border",
+      "strokeWidth": 1,
+      "gap": 24,
+      "padding": 24,
+      "children": [
+        {
+          "type": "frame",
+          "id": "qLPEO",
+          "name": "Component / Toggle Chip",
+          "reusable": true,
+          "fill": "$surface",
+          "cornerRadius": 4,
+          "stroke": "$border",
+          "strokeWidth": 1,
+          "gap": 8,
+          "padding": [
+            8,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "ellipse",
+              "id": "mYkP5",
+              "name": "Chip Status Dot",
+              "fill": "#cbd5e1",
+              "width": 8,
+              "height": 8
+            },
+            {
+              "type": "text",
+              "id": "TIU5b",
+              "name": "Chip Label",
+              "fill": "$slate",
+              "content": "extinct",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "EsVe2",
+          "name": "Component / Dropdown Field",
+          "reusable": true,
+          "width": 119,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "oGkNv",
+              "name": "Dropdown Label",
+              "fill": "$slate",
+              "content": "Kingdom",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "r1zix",
+              "name": "Dropdown Box",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 8,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "padding": 12,
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "YNp4W",
+                  "name": "Dropdown Value",
+                  "fill": "$navy",
+                  "content": "Animalia",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "iXnE6",
+                  "name": "Dropdown Chevron",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$muted"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "iUo4Z",
+          "name": "Component / Source Link Button",
+          "reusable": true,
+          "width": 120,
+          "fill": "$surface",
+          "cornerRadius": 8,
+          "stroke": "$border",
+          "strokeWidth": 1,
+          "gap": 8,
+          "padding": [
+            12,
+            14
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "ERcpe",
+              "name": "Source Label",
+              "fill": "$navy",
+              "content": "Wikipedia",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "icon",
+              "id": "vEujD",
+              "name": "External Link Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "external-link",
+              "library": "lucide",
+              "fill": "$slate"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "NobFI",
+          "name": "Component / Species Row",
+          "reusable": true,
+          "width": 620,
+          "fill": "$surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "gap": 12,
+          "padding": [
+            12,
+            16
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fGvpD",
+              "name": "Species Text Column",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "KrfuY",
+                  "name": "Canonical Name",
+                  "fill": "$navy",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Girardinichthys multiradiatus",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$mono",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "C8ZCS",
+                  "name": "Display Name",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Girardinichthys multiradiatus (Meek, 1904)",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "fV02N",
+              "name": "Badge Slot",
+              "width": 72,
+              "height": 24,
+              "gap": 6,
+              "justifyContent": "end",
+              "alignItems": "center"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "ZwLHM",
+      "x": 0,
+      "y": 199,
+      "name": "Desktop / Taxon Species Dispatcher",
+      "clip": true,
+      "width": 1440,
+      "height": 1180,
+      "fill": "$bg",
+      "layout": "vertical",
+      "gap": 24,
+      "padding": [
+        48,
+        0
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "Ifr21",
+          "name": "Desktop Page Content",
+          "width": 1200,
+          "layout": "vertical",
+          "gap": 24,
+          "children": [
+            {
+              "type": "frame",
+              "id": "B04Eo",
+              "name": "Header",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mZPCm",
+                  "name": "Title Block",
+                  "width": 520,
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "CZUV5",
+                      "name": "App Name",
+                      "fill": "$navy",
+                      "content": "Taxon",
+                      "lineHeight": 1.2,
+                      "fontFamily": "$font",
+                      "fontSize": 28,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "J1uXyo",
+                      "name": "Tagline",
+                      "fill": "$slate",
+                      "content": "Species search dispatcher",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 20,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "f7mr6N",
+                      "name": "Monospaced Subtitle",
+                      "fill": "$muted",
+                      "content": "sqlite://taxa · deterministic external search links",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$mono",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FaGDP",
+                  "name": "Status Cluster",
+                  "fill": "$surface",
+                  "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "L4Xh0",
+                      "name": "Online Dot",
+                      "fill": "#16a34a",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "Nywub",
+                      "name": "Status Label",
+                      "fill": "$slate",
+                      "content": "API ready",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$mono",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "B63GH",
+              "name": "Desktop Two Column Workspace",
+              "width": "fill_container",
+              "gap": 32,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "gHr6j",
+                  "name": "Left Column / Filters and Species",
+                  "width": 744,
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "m4ubWh",
+                      "name": "Include in Species List Group",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "KwFoR",
+                          "name": "Include Group Label",
+                          "fill": "$slate",
+                          "content": "Include in species list",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "r2iibt",
+                          "name": "Toggle Chips Row",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "id": "u2yO4",
+                              "type": "ref",
+                              "ref": "qLPEO",
+                              "name": "Toggle / extinct",
+                              "descendants": {
+                                "TIU5b": {
+                                  "content": "extinct"
+                                }
+                              }
+                            },
+                            {
+                              "id": "CmRMi",
+                              "type": "ref",
+                              "ref": "qLPEO",
+                              "name": "Toggle / synonyms",
+                              "descendants": {
+                                "TIU5b": {
+                                  "content": "synonyms"
+                                }
+                              }
+                            },
+                            {
+                              "id": "SpdAH",
+                              "type": "ref",
+                              "ref": "qLPEO",
+                              "name": "Toggle / uncertain",
+                              "descendants": {
+                                "TIU5b": {
+                                  "content": "uncertain"
+                                }
+                              }
+                            },
+                            {
+                              "id": "zyp26",
+                              "type": "ref",
+                              "ref": "qLPEO",
+                              "name": "Toggle / unassigned",
+                              "descendants": {
+                                "TIU5b": {
+                                  "content": "unassigned"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "gD071",
+                      "name": "Cascade Row",
+                      "width": "fill_container",
+                      "gap": 6,
+                      "children": [
+                        {
+                          "id": "A7mDfF",
+                          "type": "ref",
+                          "ref": "EsVe2",
+                          "name": "Dropdown / Kingdom",
+                          "width": 119,
+                          "descendants": {
+                            "oGkNv": {
+                              "content": "Kingdom"
+                            },
+                            "YNp4W": {
+                              "content": "Animalia"
+                            }
+                          }
+                        },
+                        {
+                          "id": "p3Oe7I",
+                          "type": "ref",
+                          "ref": "EsVe2",
+                          "name": "Dropdown / Phylum",
+                          "width": 119,
+                          "descendants": {
+                            "oGkNv": {
+                              "content": "Phylum"
+                            },
+                            "YNp4W": {
+                              "content": "Chordata"
+                            }
+                          }
+                        },
+                        {
+                          "id": "s2gi6V",
+                          "type": "ref",
+                          "ref": "EsVe2",
+                          "name": "Dropdown / Class",
+                          "width": 119,
+                          "descendants": {
+                            "oGkNv": {
+                              "content": "Class"
+                            },
+                            "YNp4W": {
+                              "content": "Actinopterygii"
+                            }
+                          }
+                        },
+                        {
+                          "id": "SxZyE",
+                          "type": "ref",
+                          "ref": "EsVe2",
+                          "name": "Dropdown / Order",
+                          "width": 119,
+                          "descendants": {
+                            "oGkNv": {
+                              "content": "Order"
+                            },
+                            "YNp4W": {
+                              "content": "Cyprinodontiformes"
+                            }
+                          }
+                        },
+                        {
+                          "id": "dvm1V",
+                          "type": "ref",
+                          "ref": "EsVe2",
+                          "name": "Dropdown / Family",
+                          "width": 119,
+                          "descendants": {
+                            "oGkNv": {
+                              "content": "Family"
+                            },
+                            "YNp4W": {
+                              "content": "Goodeidae"
+                            }
+                          }
+                        },
+                        {
+                          "id": "YlrH5",
+                          "type": "ref",
+                          "ref": "EsVe2",
+                          "name": "Dropdown / Genus",
+                          "width": 119,
+                          "descendants": {
+                            "oGkNv": {
+                              "content": "Genus"
+                            },
+                            "r1zix": {
+                              "stroke": "$accent",
+                              "strokeWidth": 2
+                            },
+                            "YNp4W": {
+                              "content": "Girardinichthys"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "f2Al4",
+                      "name": "Species List Panel",
+                      "width": "fill_container",
+                      "fill": "$surface",
+                      "cornerRadius": 12,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ZhHR9",
+                          "name": "Species Panel Header",
+                          "width": "fill_container",
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "IE50E",
+                              "name": "Species Panel Title",
+                              "fill": "$navy",
+                              "content": "Species in Girardinichthys",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$font",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "UlI5q",
+                              "name": "Scrollable Affordance",
+                              "fill": "$muted",
+                              "content": "max-height · scroll ↓",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "XrBn3",
+                          "name": "Scrollable Species List",
+                          "clip": true,
+                          "width": "fill_container",
+                          "height": 472,
+                          "fill": "#ffffff",
+                          "cornerRadius": 8,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "id": "PJAJt",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys multiradiatus",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys multiradiatus"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys multiradiatus (Meek, 1904)"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "zuBYf",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24,
+                                  "gap": 6,
+                                  "justifyContent": "end",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "H6IV5Z",
+                                      "name": "Marker Badge",
+                                      "fill": "$red",
+                                      "cornerRadius": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "justifyContent": "center",
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "dulHr",
+                                          "name": "Marker Text",
+                                          "fill": "#ffffff",
+                                          "content": "†",
+                                          "lineHeight": 1.5,
+                                          "fontFamily": "$mono",
+                                          "fontSize": 12,
+                                          "fontWeight": "700"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "id": "Kob1K",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys viviparus",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys viviparus"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys viviparus (Bustamante, 1837)"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "ykTCM",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24,
+                                  "gap": 6,
+                                  "justifyContent": "end",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "SaoQg",
+                                      "name": "Marker Badge",
+                                      "fill": "$amber",
+                                      "cornerRadius": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "justifyContent": "center",
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "NqYjV",
+                                          "name": "Marker Text",
+                                          "fill": "#ffffff",
+                                          "content": "=",
+                                          "lineHeight": 1.5,
+                                          "fontFamily": "$mono",
+                                          "fontSize": 12,
+                                          "fontWeight": "700"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "id": "b6u2pB",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys ireneae",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys ireneae"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys ireneae Radda, 1987"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "K5pxF",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24
+                                }
+                              }
+                            },
+                            {
+                              "id": "j38Fv",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys turneri",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys turneri"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys turneri (de Buen, 1940)"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "uys8e",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24
+                                }
+                              }
+                            },
+                            {
+                              "id": "UKVJX",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys atripinnis",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys atripinnis"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys atripinnis (Jordan, 1880)"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "E0kJ7",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24
+                                }
+                              }
+                            },
+                            {
+                              "id": "uDgGS",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys limnurgus",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys limnurgus"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys limnurgus Alvarez & Navarro, 1957"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "kLKqm",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24
+                                }
+                              }
+                            },
+                            {
+                              "id": "pKIhL",
+                              "type": "ref",
+                              "ref": "NobFI",
+                              "name": "Species / Girardinichthys sp. Chapala",
+                              "descendants": {
+                                "KrfuY": {
+                                  "content": "Girardinichthys sp. Chapala"
+                                },
+                                "C8ZCS": {
+                                  "content": "Girardinichthys sp. Chapala"
+                                },
+                                "fV02N": {
+                                  "type": "frame",
+                                  "id": "TQzfk",
+                                  "name": "Badge Slot",
+                                  "width": 72,
+                                  "height": 24,
+                                  "gap": 6,
+                                  "justifyContent": "end",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "mob40",
+                                      "name": "Marker Badge",
+                                      "fill": "$accent",
+                                      "cornerRadius": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "justifyContent": "center",
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "o1Bd44",
+                                          "name": "Marker Text",
+                                          "fill": "#ffffff",
+                                          "content": "?",
+                                          "lineHeight": 1.5,
+                                          "fontFamily": "$mono",
+                                          "fontSize": 12,
+                                          "fontWeight": "700"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "O1XINf",
+                              "layoutPosition": "absolute",
+                              "x": 700,
+                              "y": 12,
+                              "name": "List Scrollbar Track",
+                              "width": 4,
+                              "height": 430,
+                              "fill": "#e2e8f0",
+                              "cornerRadius": 4
+                            },
+                            {
+                              "type": "frame",
+                              "id": "iXnap",
+                              "layoutPosition": "absolute",
+                              "x": 700,
+                              "y": 32,
+                              "name": "List Scrollbar Thumb",
+                              "width": 4,
+                              "height": 120,
+                              "fill": "#94a3b8",
+                              "cornerRadius": 4
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fxMe5",
+                  "name": "Right Column / Resolution and Links",
+                  "width": 424,
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pPfPW",
+                      "name": "Resolved Species Breadcrumb",
+                      "width": "fill_container",
+                      "fill": "#eff6ff",
+                      "cornerRadius": 8,
+                      "stroke": "#bfdbfe",
+                      "strokeWidth": 1,
+                      "gap": 6,
+                      "padding": [
+                        12,
+                        14
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tYMvZ",
+                          "name": "Breadcrumb / Animalia",
+                          "fill": "$slate",
+                          "content": "Kingdom",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "l9Uek",
+                          "name": "Breadcrumb Chevron",
+                          "width": 10,
+                          "height": 10,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "FWwJB",
+                          "name": "Breadcrumb / Chordata",
+                          "fill": "$slate",
+                          "content": "Phylum",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "a7GzIO",
+                          "name": "Breadcrumb Chevron",
+                          "width": 10,
+                          "height": 10,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "wwBU4",
+                          "name": "Breadcrumb / Actinopterygii",
+                          "fill": "$slate",
+                          "content": "Class",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "w2SbH",
+                          "name": "Breadcrumb Chevron",
+                          "width": 10,
+                          "height": 10,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "cbnPs",
+                          "name": "Breadcrumb / Cyprinodontiformes",
+                          "fill": "$slate",
+                          "content": "Order",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "sFFKN",
+                          "name": "Breadcrumb Chevron",
+                          "width": 10,
+                          "height": 10,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "v0NO9",
+                          "name": "Breadcrumb / Goodeidae",
+                          "fill": "$slate",
+                          "content": "Family",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "NXubz",
+                          "name": "Breadcrumb Chevron",
+                          "width": 10,
+                          "height": 10,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Soni0",
+                          "name": "Breadcrumb / Girardinichthys",
+                          "fill": "$navy",
+                          "content": "Genus",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hNcAO",
+                      "name": "Species Links Panel",
+                      "width": "fill_container",
+                      "fill": "$surface",
+                      "cornerRadius": 12,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0f172a14",
+                        "offset": {
+                          "x": 0,
+                          "y": 10
+                        },
+                        "blur": 24
+                      },
+                      "layout": "vertical",
+                      "gap": 16,
+                      "padding": 20,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "njvvX",
+                          "name": "Links Panel Title",
+                          "fill": "$navy",
+                          "content": "External search links",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "i0Iq9t",
+                          "name": "Source Button Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "id": "J71RDR",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Wikipedia",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Wikipedia"
+                                }
+                              }
+                            },
+                            {
+                              "id": "sa8UP",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Google",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Google"
+                                }
+                              }
+                            },
+                            {
+                              "id": "I5pSR",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / BHL",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "BHL"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "lt8NM",
+                          "name": "Source Button Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "id": "t7J85A",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / ResearchGate",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "ResearchGate"
+                                }
+                              }
+                            },
+                            {
+                              "id": "t3x1DW",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / PLoS",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "PLoS"
+                                }
+                              }
+                            },
+                            {
+                              "id": "K16CfK",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Academia",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Academia"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ejRHV",
+                          "name": "Source Button Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "id": "Xwc3G",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Scielo",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Scielo"
+                                }
+                              }
+                            },
+                            {
+                              "id": "b0zWp",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Scholar",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Scholar"
+                                }
+                              }
+                            },
+                            {
+                              "id": "Z0qqqF",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / YouTube",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "YouTube"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Yb2PY",
+                          "name": "Source Button Row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "id": "sJOlK",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Zootaxa",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Zootaxa"
+                                }
+                              }
+                            },
+                            {
+                              "id": "hj681",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Photos",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Photos"
+                                }
+                              }
+                            },
+                            {
+                              "id": "NGfZy",
+                              "type": "ref",
+                              "ref": "iUo4Z",
+                              "name": "Source / Sci-hub",
+                              "width": 120,
+                              "descendants": {
+                                "ERcpe": {
+                                  "content": "Sci-hub",
+                                  "fill": "$slate"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "Qw9AF",
+                          "name": "Sci Hub Note",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Sci-hub is marked as a separate source; neutral outline retained.",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bxw7R",
+                      "name": "Ambiguity Picker Overlay",
+                      "width": "fill_container",
+                      "fill": "#ffffff",
+                      "cornerRadius": 12,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0f172a22",
+                        "offset": {
+                          "x": 0,
+                          "y": 18
+                        },
+                        "blur": 38
+                      },
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "xt4cI",
+                          "name": "Ambiguity Header",
+                          "width": "fill_container",
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "HUWc4",
+                              "name": "Ambiguity Title",
+                              "fill": "$navy",
+                              "content": "Ambiguous — pick one",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$font",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "F7pXif",
+                              "name": "Escape Hint",
+                              "fill": "$muted",
+                              "content": "Esc",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "zLzKD",
+                          "name": "Ambiguity Candidate",
+                          "width": "fill_container",
+                          "cornerRadius": 8,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "gap": 12,
+                          "padding": 12,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "nHjG5",
+                              "name": "Candidate Breadcrumb",
+                              "fill": "$slate",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Animalia › Chordata › Actinopterygii › Cyprinodontiformes › Goodeidae › Girardinichthys multiradiatus",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mQqG0",
+                              "name": "Select Candidate Button",
+                              "fill": "$accent",
+                              "cornerRadius": 8,
+                              "padding": [
+                                8,
+                                12
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "czDQN",
+                                  "name": "Select Label",
+                                  "fill": "#ffffff",
+                                  "content": "Select",
+                                  "lineHeight": 1.5,
+                                  "fontFamily": "$font",
+                                  "fontSize": 13,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "bhLa5",
+                          "name": "Ambiguity Candidate",
+                          "width": "fill_container",
+                          "cornerRadius": 8,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "gap": 12,
+                          "padding": 12,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "lKBXy",
+                              "name": "Candidate Breadcrumb",
+                              "fill": "$slate",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Animalia › Chordata › Actinopterygii › Cyprinodontiformes › Goodeidae › Girardinichthys viviparus",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Yw0XY",
+                              "name": "Select Candidate Button",
+                              "fill": "$accent",
+                              "cornerRadius": 8,
+                              "padding": [
+                                8,
+                                12
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ZG3W4",
+                                  "name": "Select Label",
+                                  "fill": "#ffffff",
+                                  "content": "Select",
+                                  "lineHeight": 1.5,
+                                  "fontFamily": "$font",
+                                  "fontSize": 13,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "NcpBm",
+      "x": 1520,
+      "y": 199,
+      "name": "Mobile / Taxon Species Dispatcher",
+      "clip": true,
+      "width": 390,
+      "height": 1880,
+      "fill": "$bg",
+      "layout": "vertical",
+      "gap": 20,
+      "padding": [
+        24,
+        0
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "QhpEl",
+          "name": "Mobile Page Content",
+          "width": 342,
+          "layout": "vertical",
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "Idf2R",
+              "name": "Mobile Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ASQOT",
+                  "name": "Mobile App Name",
+                  "fill": "$navy",
+                  "content": "Taxon",
+                  "lineHeight": 1.2,
+                  "fontFamily": "$font",
+                  "fontSize": 26,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "cMsxI",
+                  "name": "Mobile Tagline",
+                  "fill": "$slate",
+                  "content": "Species search dispatcher",
+                  "lineHeight": 1.3,
+                  "fontFamily": "$font",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "E9A6ro",
+                  "name": "Mobile Mono Subtitle",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "SQLite taxonomy · external source links",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "y6mID",
+              "name": "Mobile Include Group",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "qJtYg",
+                  "name": "Mobile Include Label",
+                  "fill": "$slate",
+                  "content": "Include in species list",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "vtwjm",
+                  "name": "Mobile Toggle Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "z0r9my",
+                      "type": "ref",
+                      "ref": "qLPEO",
+                      "name": "Mobile Toggle / extinct",
+                      "width": "fill_container",
+                      "descendants": {
+                        "TIU5b": {
+                          "content": "extinct"
+                        }
+                      }
+                    },
+                    {
+                      "id": "KQ1mY",
+                      "type": "ref",
+                      "ref": "qLPEO",
+                      "name": "Mobile Toggle / synonyms",
+                      "width": "fill_container",
+                      "descendants": {
+                        "TIU5b": {
+                          "content": "synonyms"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tRY6H",
+                  "name": "Mobile Toggle Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "Y8pU8M",
+                      "type": "ref",
+                      "ref": "qLPEO",
+                      "name": "Mobile Toggle / uncertain",
+                      "width": "fill_container",
+                      "descendants": {
+                        "TIU5b": {
+                          "content": "uncertain"
+                        }
+                      }
+                    },
+                    {
+                      "id": "c9lon",
+                      "type": "ref",
+                      "ref": "qLPEO",
+                      "name": "Mobile Toggle / unassigned",
+                      "width": "fill_container",
+                      "descendants": {
+                        "TIU5b": {
+                          "content": "unassigned"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "fUnQK",
+              "name": "Mobile Cascade Stack",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "id": "f7IS2",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Mobile Dropdown / Kingdom",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Kingdom"
+                    },
+                    "YNp4W": {
+                      "content": "Animalia"
+                    }
+                  }
+                },
+                {
+                  "id": "uQTw0",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Mobile Dropdown / Phylum",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Phylum"
+                    },
+                    "YNp4W": {
+                      "content": "Chordata"
+                    }
+                  }
+                },
+                {
+                  "id": "k40ij",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Mobile Dropdown / Class",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Class"
+                    },
+                    "YNp4W": {
+                      "content": "Actinopterygii"
+                    }
+                  }
+                },
+                {
+                  "id": "SM7He",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Mobile Dropdown / Order",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Order"
+                    },
+                    "YNp4W": {
+                      "content": "Cyprinodontiformes"
+                    }
+                  }
+                },
+                {
+                  "id": "uh0MR",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Mobile Dropdown / Family",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Family"
+                    },
+                    "YNp4W": {
+                      "content": "Goodeidae"
+                    }
+                  }
+                },
+                {
+                  "id": "MwJUK",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Mobile Dropdown / Genus",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Genus"
+                    },
+                    "r1zix": {
+                      "stroke": "$accent",
+                      "strokeWidth": 2
+                    },
+                    "YNp4W": {
+                      "content": "Girardinichthys"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NFnr4",
+              "name": "Mobile Species List Panel",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "KfpBN",
+                  "name": "Mobile Species Title",
+                  "fill": "$navy",
+                  "content": "Species in Girardinichthys",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "frame",
+                  "id": "V82H2D",
+                  "name": "Mobile Scrollable Species List",
+                  "clip": true,
+                  "width": "fill_container",
+                  "height": 520,
+                  "fill": "#ffffff",
+                  "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "q8nwr",
+                      "type": "ref",
+                      "ref": "NobFI",
+                      "name": "Mobile Species / Girardinichthys multiradiatus",
+                      "width": "fill_container",
+                      "descendants": {
+                        "KrfuY": {
+                          "content": "Girardinichthys multiradiatus"
+                        },
+                        "C8ZCS": {
+                          "content": "Girardinichthys multiradiatus (Meek, 1904)"
+                        },
+                        "fV02N": {
+                          "type": "frame",
+                          "id": "GCRYK",
+                          "name": "Badge Slot",
+                          "width": 56,
+                          "height": 24,
+                          "gap": 6,
+                          "justifyContent": "end",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Munfu",
+                              "name": "Marker Badge",
+                              "fill": "$red",
+                              "cornerRadius": 4,
+                              "padding": [
+                                2,
+                                7
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Fu3w2",
+                                  "name": "Marker Text",
+                                  "fill": "#ffffff",
+                                  "content": "†",
+                                  "lineHeight": 1.5,
+                                  "fontFamily": "$mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "id": "AmE66",
+                      "type": "ref",
+                      "ref": "NobFI",
+                      "name": "Mobile Species / Girardinichthys viviparus",
+                      "width": "fill_container",
+                      "descendants": {
+                        "KrfuY": {
+                          "content": "Girardinichthys viviparus"
+                        },
+                        "C8ZCS": {
+                          "content": "Girardinichthys viviparus (Bustamante, 1837)"
+                        },
+                        "fV02N": {
+                          "type": "frame",
+                          "id": "N4iUB",
+                          "name": "Badge Slot",
+                          "width": 56,
+                          "height": 24,
+                          "gap": 6,
+                          "justifyContent": "end",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Uwhho",
+                              "name": "Marker Badge",
+                              "fill": "$amber",
+                              "cornerRadius": 4,
+                              "padding": [
+                                2,
+                                7
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "C9cRW",
+                                  "name": "Marker Text",
+                                  "fill": "#ffffff",
+                                  "content": "=",
+                                  "lineHeight": 1.5,
+                                  "fontFamily": "$mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "id": "yywjm",
+                      "type": "ref",
+                      "ref": "NobFI",
+                      "name": "Mobile Species / Girardinichthys ireneae",
+                      "width": "fill_container",
+                      "descendants": {
+                        "KrfuY": {
+                          "content": "Girardinichthys ireneae"
+                        },
+                        "C8ZCS": {
+                          "content": "Girardinichthys ireneae Radda, 1987"
+                        },
+                        "fV02N": {
+                          "type": "frame",
+                          "id": "aYXL1",
+                          "name": "Badge Slot",
+                          "width": 56,
+                          "height": 24
+                        }
+                      }
+                    },
+                    {
+                      "id": "FqNW6",
+                      "type": "ref",
+                      "ref": "NobFI",
+                      "name": "Mobile Species / Girardinichthys turneri",
+                      "width": "fill_container",
+                      "descendants": {
+                        "KrfuY": {
+                          "content": "Girardinichthys turneri"
+                        },
+                        "C8ZCS": {
+                          "content": "Girardinichthys turneri (de Buen, 1940)"
+                        },
+                        "fV02N": {
+                          "type": "frame",
+                          "id": "jZQsh",
+                          "name": "Badge Slot",
+                          "width": 56,
+                          "height": 24
+                        }
+                      }
+                    },
+                    {
+                      "id": "AmBLU",
+                      "type": "ref",
+                      "ref": "NobFI",
+                      "name": "Mobile Species / Girardinichthys atripinnis",
+                      "width": "fill_container",
+                      "descendants": {
+                        "KrfuY": {
+                          "content": "Girardinichthys atripinnis"
+                        },
+                        "C8ZCS": {
+                          "content": "Girardinichthys atripinnis (Jordan, 1880)"
+                        },
+                        "fV02N": {
+                          "type": "frame",
+                          "id": "J4Ael0",
+                          "name": "Badge Slot",
+                          "width": 56,
+                          "height": 24
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "aUKjo",
+                      "layoutPosition": "absolute",
+                      "x": 302,
+                      "y": 10,
+                      "name": "Mobile Scrollbar Track",
+                      "width": 4,
+                      "height": 484,
+                      "fill": "#e2e8f0",
+                      "cornerRadius": 4
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Bvjdh",
+                      "layoutPosition": "absolute",
+                      "x": 302,
+                      "y": 28,
+                      "name": "Mobile Scrollbar Thumb",
+                      "width": 4,
+                      "height": 128,
+                      "fill": "#94a3b8",
+                      "cornerRadius": 4
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pay0C",
+              "name": "Mobile Breadcrumb",
+              "width": "fill_container",
+              "fill": "#eff6ff",
+              "cornerRadius": 8,
+              "stroke": "#bfdbfe",
+              "strokeWidth": 1,
+              "gap": 4,
+              "padding": [
+                10,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Qkgmw",
+                  "name": "Mobile Crumb / Kingdom",
+                  "fill": "$slate",
+                  "content": "Kingdom",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 10,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "bwd9c",
+                  "name": "Mobile Crumb Chevron",
+                  "width": 9,
+                  "height": 9,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "Mi29a",
+                  "name": "Mobile Crumb / Phylum",
+                  "fill": "$slate",
+                  "content": "Phylum",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 10,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "aQ8hx",
+                  "name": "Mobile Crumb Chevron",
+                  "width": 9,
+                  "height": 9,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "zA7c3",
+                  "name": "Mobile Crumb / Class",
+                  "fill": "$slate",
+                  "content": "Class",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 10,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "eLxNf",
+                  "name": "Mobile Crumb Chevron",
+                  "width": 9,
+                  "height": 9,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "ZL4T1",
+                  "name": "Mobile Crumb / Order",
+                  "fill": "$slate",
+                  "content": "Order",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 10,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "m80pR",
+                  "name": "Mobile Crumb Chevron",
+                  "width": 9,
+                  "height": 9,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "gf2tr",
+                  "name": "Mobile Crumb / Family",
+                  "fill": "$slate",
+                  "content": "Family",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 10,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "qGppQ",
+                  "name": "Mobile Crumb Chevron",
+                  "width": 9,
+                  "height": 9,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "GlUun",
+                  "name": "Mobile Crumb / Genus",
+                  "fill": "$navy",
+                  "content": "Genus",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 10,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hoitP",
+              "name": "Mobile Species Links Panel",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#0f172a12",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 20
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "IbR2t",
+                  "name": "Mobile Links Title",
+                  "fill": "$navy",
+                  "content": "External search links",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "frame",
+                  "id": "lRCgu",
+                  "name": "Mobile Link Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "J4YKZ",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Wikipedia",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Wikipedia",
+                          "fill": "$navy"
+                        }
+                      }
+                    },
+                    {
+                      "id": "APA3S",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Google",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Google",
+                          "fill": "$navy"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lR7B6",
+                  "name": "Mobile Link Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "yqLdA",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / BHL",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "BHL",
+                          "fill": "$navy"
+                        }
+                      }
+                    },
+                    {
+                      "id": "OjodJ",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / ResearchGate",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "ResearchGate",
+                          "fill": "$navy"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZxOLA",
+                  "name": "Mobile Link Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "N3eKv",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / PLoS",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "PLoS",
+                          "fill": "$navy"
+                        }
+                      }
+                    },
+                    {
+                      "id": "FlKaA",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Academia",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Academia",
+                          "fill": "$navy"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "oTFGn",
+                  "name": "Mobile Link Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "PQzQe",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Scielo",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Scielo",
+                          "fill": "$navy"
+                        }
+                      }
+                    },
+                    {
+                      "id": "AevUg",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Scholar",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Scholar",
+                          "fill": "$navy"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "zQdpP",
+                  "name": "Mobile Link Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "XF0Uf",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / YouTube",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "YouTube",
+                          "fill": "$navy"
+                        }
+                      }
+                    },
+                    {
+                      "id": "u8bVD",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Zootaxa",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Zootaxa",
+                          "fill": "$navy"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ovYwb",
+                  "name": "Mobile Link Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "ecZBL",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Photos",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Photos",
+                          "fill": "$navy"
+                        }
+                      }
+                    },
+                    {
+                      "id": "u5PJ8N",
+                      "type": "ref",
+                      "ref": "iUo4Z",
+                      "name": "Mobile Source / Sci-hub",
+                      "width": "fill_container",
+                      "descendants": {
+                        "ERcpe": {
+                          "content": "Sci-hub",
+                          "fill": "$slate"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "HNI2T",
+      "x": 1990,
+      "y": 199,
+      "name": "States / Taxon Feedback Matrix",
+      "clip": true,
+      "width": 980,
+      "height": 1080,
+      "fill": "$bg",
+      "layout": "vertical",
+      "gap": 24,
+      "padding": 32,
+      "children": [
+        {
+          "type": "frame",
+          "id": "TjgC8",
+          "name": "States Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "children": [
+            {
+              "type": "text",
+              "id": "i6W9zt",
+              "name": "States Title",
+              "fill": "$navy",
+              "content": "Inline states and interaction audit",
+              "lineHeight": 1.2,
+              "fontFamily": "$font",
+              "fontSize": 24,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "ZIdve",
+              "name": "States Subtitle",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Loading, empty, 404, 409, and 5xx variants shown next to disabled and active controls.",
+              "lineHeight": 1.5,
+              "fontFamily": "$mono",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Ovhtc",
+          "name": "States Row 1",
+          "width": "fill_container",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "dsWX8",
+              "name": "State Card / Loading children...",
+              "width": "fill_container",
+              "height": 150,
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "EkFbF",
+                  "name": "State Card Header",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "bNnGW",
+                      "name": "State Dot",
+                      "fill": "$accent",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "ksvUt",
+                      "name": "State Card Title",
+                      "fill": "$navy",
+                      "content": "Loading children...",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "p6ynIm",
+                  "name": "State Card Message",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Shown directly under the active dropdown while child taxa are requested.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "YRrAO",
+              "name": "State Card / No children",
+              "width": "fill_container",
+              "height": 150,
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "rjuq7",
+                  "name": "State Card Header",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "WPFBt",
+                      "name": "State Dot",
+                      "fill": "$accent",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "U8n9pQ",
+                      "name": "State Card Title",
+                      "fill": "$navy",
+                      "content": "No children",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "H8YPu",
+                  "name": "State Card Message",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Empty genus result: the selected branch has no child taxa to list.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "DJZNh",
+          "name": "States Row 2",
+          "width": "fill_container",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "aQ6rJ",
+              "name": "State Card / Not found",
+              "width": "fill_container",
+              "height": 150,
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "#fecaca",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "VM8Vm",
+                  "name": "State Card Header",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "iHMhN",
+                      "name": "State Dot",
+                      "fill": "$red",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "M8NMu",
+                      "name": "State Card Title",
+                      "fill": "$navy",
+                      "content": "Not found",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "mAflg",
+                  "name": "State Card Message",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "404: no canonical species matched the submitted genus and epithet.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "uosA6",
+              "name": "State Card / Network error",
+              "width": "fill_container",
+              "height": 150,
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "#fecaca",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Fjfhv",
+                  "name": "State Card Header",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "t738eO",
+                      "name": "State Dot",
+                      "fill": "$red",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "v89Zy",
+                      "name": "State Card Title",
+                      "fill": "$navy",
+                      "content": "Network error",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "F87Tn",
+                  "name": "State Card Message",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "5xx or unreachable API: keep the current selection and offer retry.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "rCdAS",
+          "name": "States Row 3",
+          "width": "fill_container",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "qelWL",
+              "name": "State Card / Ambiguous — pick one",
+              "width": "fill_container",
+              "height": 150,
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "#fed7aa",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "h8XJf",
+                  "name": "State Card Header",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "CmRsf",
+                      "name": "State Dot",
+                      "fill": "$amber",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "irudn",
+                      "name": "State Card Title",
+                      "fill": "$navy",
+                      "content": "Ambiguous — pick one",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "eaSdE",
+                  "name": "State Card Message",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "409: multiple candidates share the same genus + epithet pair.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "z10pZI",
+                  "name": "Compact Candidate",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "CnRTx",
+                      "name": "Compact Candidate Text",
+                      "fill": "$slate",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Animalia › Chordata › Actinopterygii › Goodeidae › G. multiradiatus",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bZtj3",
+                      "name": "Compact Select Button",
+                      "fill": "$accent",
+                      "cornerRadius": 8,
+                      "padding": [
+                        5,
+                        9
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "KaSA2",
+                          "name": "Compact Select Label",
+                          "fill": "#ffffff",
+                          "content": "Select",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZGu3w",
+                  "name": "Compact Candidate",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "KhMQn",
+                      "name": "Compact Candidate Text",
+                      "fill": "$slate",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Animalia › Chordata › Actinopterygii › Goodeidae › G. viviparus",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "dCWIO",
+                      "name": "Compact Select Button",
+                      "fill": "$accent",
+                      "cornerRadius": 8,
+                      "padding": [
+                        5,
+                        9
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Z4Ty7q",
+                          "name": "Compact Select Label",
+                          "fill": "#ffffff",
+                          "content": "Select",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "r5hZtO",
+              "name": "Disabled Cascade State",
+              "width": "fill_container",
+              "height": 320,
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "LLTkg",
+                  "name": "Disabled State Title",
+                  "fill": "$navy",
+                  "content": "Disabled dropdowns",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "L2PvNL",
+                  "name": "Disabled State Note",
+                  "fill": "$slate",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "When no parent is chosen, downstream dropdowns show em dash with muted background.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "id": "g31Qr0",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Enabled Kingdom Example",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Kingdom"
+                    },
+                    "YNp4W": {
+                      "content": "Animalia"
+                    }
+                  }
+                },
+                {
+                  "id": "H4uVk",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Disabled Phylum Example",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Phylum"
+                    },
+                    "r1zix": {
+                      "fill": "$surface-muted",
+                      "stroke": "$border"
+                    },
+                    "YNp4W": {
+                      "content": "—",
+                      "fill": "$muted"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "S9t34",
+          "name": "Focus and Toggle Row",
+          "width": "fill_container",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "F54Ee6",
+              "name": "Focus Ring Example",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "#bfdbfe",
+              "strokeWidth": 2,
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "SRskk",
+                  "name": "Focus Title",
+                  "fill": "$navy",
+                  "content": "Visible focus rings",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "700"
+                },
+                {
+                  "id": "pTcU5",
+                  "type": "ref",
+                  "ref": "EsVe2",
+                  "name": "Focused Genus Dropdown",
+                  "width": "fill_container",
+                  "descendants": {
+                    "oGkNv": {
+                      "content": "Genus"
+                    },
+                    "r1zix": {
+                      "stroke": "$accent",
+                      "strokeWidth": 2
+                    },
+                    "YNp4W": {
+                      "content": "Girardinichthys"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "iNxwl",
+              "name": "Active Toggle Example",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "TBjOz",
+                  "name": "Active Toggle Title",
+                  "fill": "$navy",
+                  "content": "Single accent active state",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "frame",
+                  "id": "kqJ3F",
+                  "name": "Active Toggles",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "Y6WfJa",
+                      "type": "ref",
+                      "ref": "qLPEO",
+                      "name": "Active Synonyms Toggle",
+                      "fill": "$accent",
+                      "stroke": "$accent",
+                      "descendants": {
+                        "mYkP5": {
+                          "fill": "#ffffff"
+                        },
+                        "TIU5b": {
+                          "content": "synonyms",
+                          "fill": "#ffffff"
+                        }
+                      }
+                    },
+                    {
+                      "id": "VP2Z4",
+                      "type": "ref",
+                      "ref": "qLPEO",
+                      "name": "Inactive Extinct Toggle",
+                      "descendants": {
+                        "TIU5b": {
+                          "content": "extinct"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "navy": {
+      "type": "color",
+      "value": "#0f172a"
+    },
+    "slate": {
+      "type": "color",
+      "value": "#475569"
+    },
+    "muted": {
+      "type": "color",
+      "value": "#64748b"
+    },
+    "bg": {
+      "type": "color",
+      "value": "#f8fafc"
+    },
+    "surface": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "surface-muted": {
+      "type": "color",
+      "value": "#f1f5f9"
+    },
+    "border": {
+      "type": "color",
+      "value": "#e2e8f0"
+    },
+    "accent": {
+      "type": "color",
+      "value": "#3b82f6"
+    },
+    "red": {
+      "type": "color",
+      "value": "#dc2626"
+    },
+    "amber": {
+      "type": "color",
+      "value": "#d97706"
+    },
+    "font": {
+      "type": "string",
+      "value": "Inter"
+    },
+    "mono": {
+      "type": "string",
+      "value": "IBM Plex Mono"
+    }
+  },
+  "fileToken": "c29f4068-15cb-42c8-ac19-bf8dce3be41a"
+}
