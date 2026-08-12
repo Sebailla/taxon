@@ -34,158 +34,17 @@ import {
   fetchKingdoms,
   fetchSpecies,
 } from "../api";
-import { Toggles, type InclusionClass } from "./Toggles";
+import {
+  CHILD_RANK_PATH,
+  INITIAL,
+  RANKS,
+  type Rank,
+  type Action,
+  cascadeReducer,
+  parentSegments,
+} from "./Cascade.state";
+import { Toggles } from "./Toggles";
 import { SpeciesList } from "./SpeciesList";
-
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
-
-export const RANKS = [
-  "kingdom",
-  "phylum",
-  "class",
-  "order",
-  "family",
-  "genus",
-] as const;
-export type Rank = (typeof RANKS)[number];
-
-export interface CascadeState {
-  /** Selected segment per rank. ``null`` means unselected. */
-  selected: Record<Rank, string | null>;
-  /** Children available per rank, keyed by the parent path. */
-  children: Record<Rank, TaxonResponse[]>;
-  /** Async status for each level — empty object means idle. */
-  childrenStatus: Record<Rank, "idle" | "loading" | "error">;
-  /** The active async request, used to abort stale calls. */
-  generation: number;
-  /** Inclusion toggles (default empty = accepted only). */
-  include: Set<InclusionClass>;
-  /** Species list for the current genus. */
-  species: TaxonResponse[];
-  /** Species-list cursor and load status. */
-  speciesStatus: "idle" | "loading" | "error";
-  speciesCursor: string | null;
-}
-
-type Action =
-  | { type: "set-segment"; rank: Rank; value: string | null }
-  | { type: "set-children"; rank: Rank; rows: TaxonResponse[] }
-  | { type: "set-status"; rank: Rank; status: "idle" | "loading" | "error" }
-  | { type: "set-include"; include: Set<InclusionClass> }
-  | { type: "set-species"; rows: TaxonResponse[]; cursor: string | null }
-  | { type: "set-species-status"; status: "idle" | "loading" | "error" }
-  | { type: "bump-generation" };
-
-const INITIAL: CascadeState = {
-  selected: {
-    kingdom: null,
-    phylum: null,
-    class: null,
-    order: null,
-    family: null,
-    genus: null,
-  },
-  children: {
-    kingdom: [],
-    phylum: [],
-    class: [],
-    order: [],
-    family: [],
-    genus: [],
-  },
-  childrenStatus: {
-    kingdom: "idle",
-    phylum: "idle",
-    class: "idle",
-    order: "idle",
-    family: "idle",
-    genus: "idle",
-  },
-  generation: 0,
-  include: new Set<InclusionClass>(),
-  species: [],
-  speciesStatus: "idle",
-  speciesCursor: null,
-};
-
-/** Pure reducer; testable in isolation. */
-export function cascadeReducer(state: CascadeState, action: Action): CascadeState {
-  switch (action.type) {
-    case "set-segment": {
-      const next: CascadeState = {
-        ...state,
-        selected: { ...state.selected, [action.rank]: action.value },
-      };
-      // Reset every child of the changed rank.
-      const idx = RANKS.indexOf(action.rank);
-      for (let i = idx + 1; i < RANKS.length; i += 1) {
-        const childRank = RANKS[i] as Rank;
-        next.selected = { ...next.selected, [childRank]: null };
-        next.children = { ...next.children, [childRank]: [] };
-        next.childrenStatus = { ...next.childrenStatus, [childRank]: "idle" };
-      }
-      if (action.rank === "genus") {
-        next.species = [];
-        next.speciesCursor = null;
-        next.speciesStatus = "idle";
-      }
-      return next;
-    }
-    case "set-children": {
-      return {
-        ...state,
-        children: { ...state.children, [action.rank]: action.rows },
-      };
-    }
-    case "set-status": {
-      return {
-        ...state,
-        childrenStatus: { ...state.childrenStatus, [action.rank]: action.status },
-      };
-    }
-    case "set-include": {
-      return { ...state, include: action.include };
-    }
-    case "set-species": {
-      return { ...state, species: action.rows, speciesCursor: action.cursor };
-    }
-    case "set-species-status": {
-      return { ...state, speciesStatus: action.status };
-    }
-    case "bump-generation": {
-      return { ...state, generation: state.generation + 1 };
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// Maps the parent rank to the path segment of the children
-// endpoint. The endpoint ``/api/<kingdom>/<phyla>`` serves the
-// phylum children of a kingdom, so a kingdom has ``"phyla"`` as
-// its child rank. ``genus`` is excluded — the species list is
-// served by the dedicated effect below, not by this map.
-const CHILD_RANK_PATH: Record<Exclude<Rank, "genus">, string> = {
-  kingdom: "phyla",
-  phylum: "classes",
-  class: "orders",
-  order: "families",
-  family: "genera",
-};
-
-function parentSegments(selected: Record<Rank, string | null>): string[] {
-  const segs: string[] = [];
-  for (const r of RANKS) {
-    const value = selected[r];
-    if (value === null) break;
-    segs.push(value);
-  }
-  return segs;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -211,7 +70,6 @@ export function Cascade(): JSX.Element {
   }, []);
 
   // Load children when the previous selection changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const segs = parentSegments(state.selected);
     if (segs.length === 0) return;
@@ -248,7 +106,6 @@ export function Cascade(): JSX.Element {
   }, [state.selected]);
 
   // Load species when the genus is set.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (state.selected.genus === null) return;
     const ctrl = new AbortController();
@@ -271,6 +128,16 @@ export function Cascade(): JSX.Element {
       }
     });
     return () => ctrl.abort();
+    // The deps array intentionally lists only the trigger keys
+    // (``genus`` + ``include``). Reading ``state.selected`` to build
+    // the parent path is safe: the reducer resets every child rank
+    // when an ancestor changes, so ``state.selected.genus`` always
+    // tracks the user-visible genus. Adding ``state.selected`` to the
+    // deps would re-fire the fetch on every phylum/class change,
+    // which is wasteful since those changes already trigger a
+    // children-fetch effect and the species list under the previous
+    // genus has been cleared by the reducer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.selected.genus, state.include]);
 
   return (
