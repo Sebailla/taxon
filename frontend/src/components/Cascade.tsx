@@ -17,9 +17,14 @@ Key invariants:
 - Every dropdown carries a visible label AND an ``aria-label``.
 - Disabled segments use ``aria-disabled`` so screen readers
   announce the unavailability.
+- A11y followup: a freshly-enabled child dropdown receives focus
+  when its parent changes, so keyboard users Tab once instead of
+  Tab + click. The previous ``disabled`` state per rank is tracked
+  in a ref so the effect fires only when the boolean actually
+  transitions.
 */
 
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef } from "react";
 
 import {
   type ApiResult,
@@ -159,12 +164,17 @@ export function cascadeReducer(state: CascadeState, action: Action): CascadeStat
 // Helpers
 // ---------------------------------------------------------------------------
 
-const CHILD_RANK_PATH: Record<Exclude<Rank, "kingdom">, string> = {
-  phylum: "phyla",
-  class: "classes",
-  order: "orders",
-  family: "families",
-  genus: "genera",
+// Maps the parent rank to the path segment of the children
+// endpoint. The endpoint ``/api/<kingdom>/<phyla>`` serves the
+// phylum children of a kingdom, so a kingdom has ``"phyla"`` as
+// its child rank. ``genus`` is excluded — the species list is
+// served by the dedicated effect below, not by this map.
+const CHILD_RANK_PATH: Record<Exclude<Rank, "genus">, string> = {
+  kingdom: "phyla",
+  phylum: "classes",
+  class: "orders",
+  order: "families",
+  family: "genera",
 };
 
 function parentSegments(selected: Record<Rank, string | null>): string[] {
@@ -205,16 +215,19 @@ export function Cascade(): JSX.Element {
   useEffect(() => {
     const segs = parentSegments(state.selected);
     if (segs.length === 0) return;
-    // Load the children of the deepest selected rank. The first
-    // selected rank (``kingdom``) was loaded by the mount effect;
-    // subsequent ranks load here. ``genus`` is included so the
-    // user can pick a genus; the species list is loaded by a
-    // separate effect that watches ``state.selected.genus``.
-    const targetRank = RANKS[segs.length] as Rank | undefined;
-    if (targetRank === undefined) return; // species list owns the leaf
-    if (targetRank === "kingdom") return; // already loaded on mount
-
-    const parentRank = RANKS[segs.length - 1] as Exclude<Rank, "kingdom">;
+    const parentRank = RANKS[segs.length - 1] as Rank;
+    const targetRank = RANKS[segs.length] as Rank;
+    // ``RANKS[6]`` is undefined; once the user picks a genus
+    // there are no further children endpoints in this helper
+    // (the species list is owned by the dedicated effect below).
+    if (targetRank === undefined) return;
+    // ``genus`` is excluded from CHILD_RANK_PATH because the
+    // species list has its own dedicated effect. We also skip
+    // here to keep TypeScript happy (the index type does not
+    // include "genus").
+    if (parentRank === "genus") return;
+    // kingdom → phyla, phylum → classes, class → orders, order →
+    // families, family → genera.
     const childPath = CHILD_RANK_PATH[parentRank] as
       | "phyla"
       | "classes"
@@ -323,10 +336,30 @@ interface RankDropdownProps {
 
 function RankDropdown(props: RankDropdownProps): JSX.Element {
   const label = labelFor(props.rank);
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+
+  // A11y followup: when the dropdown transitions from disabled to
+  // enabled, move keyboard focus to it so keyboard users Tab once
+  // instead of Tab + click.
+  //
+  // The initial ``wasDisabledRef.current`` value matches the first
+  // render's disabled state so the effect only fires on a true
+  // transition. The Kingdom dropdown is enabled from the start
+  // (no parent), so ``wasDisabledRef.current`` starts as ``false``
+  // and the effect does not steal focus on mount.
+  const wasDisabledRef = useRef<boolean>(props.disabled);
+  useEffect(() => {
+    if (wasDisabledRef.current && !props.disabled) {
+      queueMicrotask(() => selectRef.current?.focus());
+    }
+    wasDisabledRef.current = props.disabled;
+  }, [props.disabled]);
+
   return (
     <label className="flex flex-col gap-1 text-sm text-navy">
       <span className="font-medium">{label}</span>
       <select
+        ref={selectRef}
         aria-label={label}
         disabled={props.disabled}
         value={props.value ?? ""}

@@ -9,9 +9,14 @@ modal:
 - Closes on Escape (focus trap) and on backdrop click.
 - Calls ``onPick`` with the chosen candidate; the parent component
   is responsible for the post-pick state transition.
+- Traps keyboard focus inside the dialog while it is open (WCAG
+  modal pattern). Tab moves focus to the next focusable element
+  inside the dialog; at the end of the list, focus wraps back to
+  the first element. Shift+Tab does the reverse. The first element
+  receives focus when the dialog opens.
 */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import type { AmbiguityCandidate } from "../api";
 
@@ -22,9 +27,65 @@ interface AmbiguityPickerProps {
 }
 
 export function AmbiguityPicker(props: AmbiguityPickerProps): JSX.Element {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const lastFocusedRef = useRef<Element | null>(null);
+
+  // Capture the trigger element so we can restore focus when the
+  // dialog closes. WAI-ARIA APG recommends this for modal dialogs.
+  useEffect(() => {
+    lastFocusedRef.current = document.activeElement;
+    return () => {
+      const last = lastFocusedRef.current;
+      if (
+        last !== null &&
+        last instanceof HTMLElement &&
+        document.body.contains(last)
+      ) {
+        last.focus();
+      }
+    };
+  }, []);
+
+  // Move focus to the first focusable element inside the dialog
+  // on mount. WAI-ARIA APG requires focus to start inside the dialog.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog === null) return;
+    const first = dialog.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    first?.focus();
+  }, []);
+
+  // Trap Tab / Shift+Tab inside the dialog. We compute the focusable
+  // list on every keydown so the trap reflects the DOM at the moment
+  // the user pressed Tab (a candidate row could be removed mid-session).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") props.onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (dialog === null) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute("disabled"));
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -32,6 +93,7 @@ export function AmbiguityPicker(props: AmbiguityPickerProps): JSX.Element {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="ambiguity-title"
@@ -67,7 +129,7 @@ export function AmbiguityPicker(props: AmbiguityPickerProps): JSX.Element {
               <button
                 type="button"
                 onClick={() => props.onPick(c)}
-                className="rounded-btn border border-accent bg-blue-50 px-3 py-1 text-sm text-accent hover:bg-accent hover:text-surface"
+                className="min-h-[44px] rounded-btn border border-accent bg-blue-50 px-3 py-1 text-sm text-accent hover:bg-accent hover:text-surface"
               >
                 Select
               </button>
@@ -78,7 +140,7 @@ export function AmbiguityPicker(props: AmbiguityPickerProps): JSX.Element {
           <button
             type="button"
             onClick={props.onClose}
-            className="rounded-btn border border-border bg-surface px-3 py-1 text-sm text-slate hover:bg-bg"
+            className="min-h-[44px] rounded-btn border border-border bg-surface px-3 py-1 text-sm text-slate hover:bg-bg"
           >
             Cancel
           </button>
