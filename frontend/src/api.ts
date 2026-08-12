@@ -251,3 +251,18 @@ export function splitSpeciesName(canonical: string): {
 export function inclusionCsv(include: Set<InclusionClass>): string {
   return Array.from(include).join(",");
 }
+
+/**
+ * Build the breadcrumb trail from the parent-path segments. The first
+ * segment is dropped when it is the Biota superdomain so the
+ * breadcrumb reads Kingdom → … → Genus, mirroring the Phase 3 design
+ * and the backend's ``build_breadcrumb`` helper.
+ */
+export function buildBreadcrumb(segments: string[]): string[] {
+  if (segments.length === 0) return [];
+  const trail = [...segments];
+  if (trail[0]?.toLowerCase() === "biota") {
+    trail.shift();
+  }
+  return trail;
+}
