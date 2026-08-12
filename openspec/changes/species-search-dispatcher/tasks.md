@@ -34,27 +34,27 @@ Lines changed: 600-900. Delivery strategy: ask-on-risk. 6 chained PRs; child bas
 
 ## Phase 3: Frontend Design (BEFORE code per AGENTS.md §5)
 
-- [ ] 3.1 Create `taxon/.pen` via Pencil MCP: cascade + ambiguity picker + species-links panel.
-- [ ] 3.2 Audit under `impeccable` (a11y, hierarchy, typography, color, motion, anti-patterns); iterate.
-- [ ] 3.3 Document approval in `taxon/docs/design/approval.md` (date + sign-off).
+- [x] 3.1 Create `taxon/.pen` via Pencil MCP: cascade + ambiguity picker + species-links panel.
+- [x] 3.2 Audit under `impeccable` (a11y, hierarchy, typography, color, motion, anti-patterns); iterate.
+- [x] 3.3 Document approval in `taxon/docs/design/approval.md` (date + sign-off).
 
 ## Phase 4: Frontend Implementation
 
-- [ ] 4.1 Scaffold `taxon/frontend/` Vite (React 18 + TS + TailwindCSS 3) + Vitest/Testing Library.
-- [ ] 4.2 (R) test `taxon/frontend/tests/api.test.ts` typed client + 409 handling.
-- [ ] 4.3 (G) impl `taxon/frontend/src/api.ts` typed client.
-- [ ] 4.4 (R) test `taxon/frontend/tests/Cascade.test.tsx` reset-on-parent-change + abort stale + loading/error/empty.
-- [ ] 4.5 (G) impl `taxon/frontend/src/Cascade.tsx` 5 dropdowns + 6th fixed scrollable species list.
-- [ ] 4.6 (R) test `taxon/frontend/tests/SpeciesLinks.test.tsx` 12 buttons + external-link attrs.
-- [ ] 4.7 (G) impl `taxon/frontend/src/SpeciesLinks.tsx`.
-- [ ] 4.8 (R) test `taxon/frontend/tests/Toggles.test.tsx` OR semantics + default off.
-- [ ] 4.9 (G) impl `taxon/frontend/src/Toggles.tsx`.
-- [ ] 4.10 (R) test `taxon/frontend/tests/AmbiguityPicker.test.tsx` lists candidates with breadcrumb.
-- [ ] 4.11 (G) impl `taxon/frontend/src/AmbiguityPicker.tsx`.
+- [x] 4.1 Scaffold `taxon/frontend/` Vite (React 18 + TS + TailwindCSS 3) + Vitest/Testing Library.
+- [x] 4.2 (R) test `taxon/frontend/tests/api.test.ts` typed client + 409 handling.
+- [x] 4.3 (G) impl `taxon/frontend/src/api.ts` typed client.
+- [x] 4.4 (R) test `taxon/frontend/tests/Cascade.test.tsx` reset-on-parent-change + abort stale + loading/error/empty.
+- [x] 4.5 (G) impl `taxon/frontend/src/Cascade.tsx` 5 dropdowns + 6th fixed scrollable species list.
+- [x] 4.6 (R) test `taxon/frontend/tests/SpeciesLinks.test.tsx` 12 buttons + external-link attrs.
+- [x] 4.7 (G) impl `taxon/frontend/src/SpeciesLinks.tsx`.
+- [x] 4.8 (R) test `taxon/frontend/tests/Toggles.test.tsx` OR semantics + default off.
+- [x] 4.9 (G) impl `taxon/frontend/src/Toggles.tsx`.
+- [x] 4.10 (R) test `taxon/frontend/tests/AmbiguityPicker.test.tsx` lists candidates with breadcrumb.
+- [x] 4.11 (G) impl `taxon/frontend/src/AmbiguityPicker.tsx`.
 
 ## Phase 5: Documentation & Cleanup
 
-- [ ] 5.1 Write `taxon/README.md` (EN) + ES mirror `taxon/documents-es/README-es.md`.
-- [ ] 5.2 Set up CI on `develop` (pytest, vitest, ruff, mypy, eslint).
-- [ ] 5.3 Post-merge green: `/learn-es/2026-08-09-species-search-dispatcher.md`.
-- [ ] 5.4 Conventional commits: `feat`, `fix`, `test`, `docs`, `chore`, `refactor`; no AI attribution.
+- [x] 5.1 Write `taxon/README.md` (EN) + ES mirror `taxon/documents-es/README-es.md`.
+- [x] 5.2 Set up CI on `develop` (pytest, vitest, ruff, mypy, eslint).
+- [x] 5.3 Post-merge green: `/learn-es/2026-08-12-species-search-dispatcher.md`.
+- [x] 5.4 Conventional commits: `feat`, `fix`, `test`, `docs`, `chore`, `refactor`; no AI attribution.
