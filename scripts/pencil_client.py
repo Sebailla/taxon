@@ -34,13 +34,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.session import ClientSession as ClientSessionClass
 from mcp.client.stdio import stdio_client
 
-
 # Pencil MCP server binary lives inside Pen.app; the path is stable on
 # macOS for the desktop app. ``--app desktop`` selects the desktop app
 # bridge (versus the VS Code extension bridge).
 PENCIL_SERVER = (
-    "/Applications/Pen.app/Contents/Resources/"
-    "app.asar.unpacked/out/mcp-server-darwin-arm64"
+    "/Applications/Pen.app/Contents/Resources/app.asar.unpacked/out/mcp-server-darwin-arm64"
 )
 PENCIL_AGENT = "openCodeCLI"
 # Fixed client_id per session. The Pencil MCP server requires every
@@ -186,9 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     execute_p = sub.add_parser("execute", help="Execute a JavaScript snippet")
     execute_p.add_argument("--input", required=True, help="JavaScript snippet")
 
-    screenshot_p = sub.add_parser(
-        "screenshot", help="Capture a screenshot of a node"
-    )
+    screenshot_p = sub.add_parser("screenshot", help="Capture a screenshot of a node")
     screenshot_p.add_argument("--node-id", default="document")
     screenshot_p.add_argument("--output", required=True)
 
