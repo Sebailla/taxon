@@ -18,7 +18,8 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -66,13 +67,25 @@ def _resolve_database_url(database_url: str | None) -> str:
 
 
 def _build_engine(database_url: str) -> Engine:
-    """Create the SQLAlchemy engine with sensible defaults for SQLite."""
+    """Create the SQLAlchemy engine with sensible defaults for SQLite.
+
+    In-memory SQLite (``sqlite:///:memory:``) normally creates a
+    fresh database per connection, which means a session opened on
+    one thread cannot see the schema created by another thread's
+    lifespan. We pin the engine to a single shared connection via
+    ``StaticPool`` so the schema lives for the lifetime of the
+    process. File-backed SQLite is unaffected.
+    """
     connect_args: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"future": True}
     if database_url.startswith("sqlite"):
-        # Required so the same connection can be used across threads in
-        # FastAPI's threadpool + lifespan teardown.
         connect_args["check_same_thread"] = False
-    return create_engine(database_url, connect_args=connect_args, future=True)
+        if database_url == "sqlite:///:memory:":
+            from sqlalchemy.pool import StaticPool
+
+            kwargs["poolclass"] = StaticPool
+    kwargs["connect_args"] = connect_args
+    return create_engine(database_url, **kwargs)
 
 
 def _error_response(
@@ -163,7 +176,58 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     app.include_router(api_router)
 
+    # Mount the production frontend bundle when ``frontend/dist``
+    # exists on disk. The check is opt-in so the API keeps working
+    # during development (where the SPA is served by Vite on :5173)
+    # and during tests (where the bundle is irrelevant). The
+    # ``html=True`` flag tells Starlette to fall back to
+    # ``index.html`` for client-side routes that do not have a
+    # corresponding file on disk — the React Router in the SPA
+    # handles the actual 404/200 logic once the page loads.
+    _mount_frontend(app)
+
     return app
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    """Mount the SPA bundle when ``frontend/dist`` exists on disk.
+
+    The mount order matters: the API router is included above this
+    function so ``/api/*`` and ``/healthz`` always win. The
+    StaticFiles handler matches every other path. SPA client-side
+    routes that resolve to non-existent files fall back to
+    ``index.html`` so the React app can handle the route.
+
+    The fallback is wired through a 404 exception handler so we
+    do not need to register a catch-all route that would shadow
+    the API routes. The handler only fires for paths the API
+    router did not claim.
+    """
+    dist_dir = Path("frontend/dist")
+    if not dist_dir.is_dir():
+        return
+    index_html = dist_dir / "index.html"
+    if not index_html.is_file():
+        return
+    app.mount(
+        "/",
+        StaticFiles(directory=str(dist_dir), html=False),
+        name="frontend",
+    )
+
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _spa_fallback(
+        _request: Request, exc: StarletteHTTPException
+    ) -> FileResponse | JSONResponse:
+        # Only intercept 404s; let every other status through.
+        if exc.status_code != 404:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+            )
+        return FileResponse(str(index_html), media_type="text/html")
 
 
 def get_session(app: FastAPI) -> Iterator[Session]:
