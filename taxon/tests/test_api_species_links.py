@@ -1,6 +1,6 @@
 """RED-first contract tests for the per-species dispatch-URL endpoint.
 
-Sub-PR 2C adds a new endpoint that emits the 12 search-source URLs
+Sub-PR 2C adds a new endpoint that emits the 13 search-source URLs
 captured from the legacy spreadsheet for a resolved species:
 
     GET /api/{kingdom}/{phylum}/{class}/{order}/{family}/{genus}/{epithet}/links
@@ -73,11 +73,11 @@ def test_links_endpoint_returns_200_with_links_envelope(app: FastAPI) -> None:
     assert set(body.keys()) == {"links", "species"}
 
 
-def test_links_envelope_emits_exactly_twelve_links(app: FastAPI) -> None:
+def test_links_envelope_emits_exactly_thirteen_links(app: FastAPI) -> None:
     with _client(app) as client:
         body = client.get(LINKS_PATH).json()
 
-    assert len(body["links"]) == 12
+    assert len(body["links"]) == 13
     # The species envelope identifies the resolved species.
     assert body["species"]["canonical_name"] == "Girardinichthys multiradiatus"
 
@@ -95,7 +95,7 @@ def test_links_each_item_has_source_label_url(app: FastAPI) -> None:
 
 
 def test_links_order_matches_templates_file(app: FastAPI) -> None:
-    """The 12 links MUST be in the row order from docs/sources/templates.md."""
+    """The 13 links MUST be in the row order from docs/sources/templates.md."""
     with _client(app) as client:
         body = client.get(LINKS_PATH).json()
 
