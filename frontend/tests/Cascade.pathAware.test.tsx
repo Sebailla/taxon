@@ -5,14 +5,15 @@ dropdowns" to "N dynamic dropdowns driven by /path-children".
 These tests pin the new contract:
 
 - The initial render shows the Kingdom dropdown with the list
-  of kingdoms from /path-children?path= (empty path, which
-  the backend expands to kingdom children).
+  of kingdoms from /api/kingdoms (the path-aware endpoint
+  rejects the empty path, so the root uses the dedicated
+  kingdom endpoint).
 - Each segment the user picks triggers a /path-children call
   with the cumulative path; the next dropdown renders with
   the response's children.
 - The cascade renders one dropdown per non-leaf response.
   When ``next_rank_hint`` is null (the deepest taxon has no
-  children), the species list takes over via /api/.../species.
+  children), the species list takes over via /api/species-list.
 - Changing a parent segment clears every child segment so no
   stale state leaks across picks.
 - In-flight requests are aborted when a new selection supersedes
@@ -40,10 +41,25 @@ function mockFetchJson(json: unknown, status = 200): Response {
   });
 }
 
-function mockFetchSequence(responses: Response[]): ReturnType<typeof vi.fn> {
+function mockFetchSequence(
+  responses: Array<Response | [string, Response]>,
+): ReturnType<typeof vi.fn> {
   const fn = vi.fn();
-  for (const r of responses) {
-    fn.mockResolvedValueOnce(r);
+  // Listed responses fire in order. Tuple entries (matcher, response)
+  // match any URL containing the matcher; bare responses fire on the
+  // next call regardless of URL.
+  for (const entry of responses) {
+    if (Array.isArray(entry)) {
+      const [matcher, response] = entry;
+      fn.mockImplementationOnce((url: string) => {
+        if (url.includes(matcher)) {
+          return Promise.resolve(response);
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      });
+    } else {
+      fn.mockResolvedValueOnce(entry);
+    }
   }
   globalThis.fetch = fn as unknown as typeof fetch;
   return fn;
@@ -77,27 +93,16 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("Path-aware cascade initial render", () => {
-  it("loads the kingdom list on mount via /path-children?path=", async () => {
+  it("loads the kingdom list on mount via /api/kingdoms", async () => {
     mockFetchSequence([
-      // /path-children?path= → kingdoms list
-      mockFetchJson({
-        parent: {
-          id: 0,
-          name: "(root)",
-          display_name: "(root)",
-          rank: "domain",
-          parent_id: null,
-          is_synonym: false,
-          is_extinct: false,
-          is_uncertain: false,
-          is_unassigned: false,
-        },
-        children: [
+      // /api/kingdoms → root kingdom list (TaxonResponse[]).
+      [
+        "/api/kingdoms",
+        mockFetchJson([
           taxon(2, "Animalia", "kingdom"),
           taxon(11, "Plantae", "kingdom"),
-        ],
-        next_rank_hint: "kingdom",
-      }),
+        ]),
+      ],
     ]);
 
     render(<Cascade />);
@@ -118,12 +123,11 @@ describe("Path-aware cascade chains through intermediate ranks", () => {
     "renders one dropdown per non-leaf response so a Chordata → subphylum Vertebrata chain works",
     async () => {
       mockFetchSequence([
-        // Initial kingdom list.
-        mockFetchJson({
-          parent: taxon(0, "(root)", "domain"),
-          children: [taxon(2, "Animalia", "kingdom")],
-          next_rank_hint: "kingdom",
-        }),
+        // Initial kingdom list — /api/kingdoms.
+        [
+          "/api/kingdoms",
+          mockFetchJson([taxon(2, "Animalia", "kingdom")]),
+        ],
         // /path-children?path=Animalia → phyla
         mockFetchJson({
           parent: taxon(2, "Animalia", "kingdom"),
@@ -183,11 +187,11 @@ describe("Path-aware cascade chains through intermediate ranks", () => {
 describe("Path-aware cascade reaches species after a genus is picked", () => {
   it("fetches the species list when the user picks a genus", async () => {
     mockFetchSequence([
-      mockFetchJson({
-        parent: taxon(0, "(root)", "domain"),
-        children: [taxon(2, "Animalia", "kingdom")],
-        next_rank_hint: "kingdom",
-      }),
+      // /api/kingdoms — root kingdom list.
+      [
+        "/api/kingdoms",
+        mockFetchJson([taxon(2, "Animalia", "kingdom")]),
+      ],
       // /path-children?path=Animalia
       mockFetchJson({
         parent: taxon(2, "Animalia", "kingdom"),
@@ -250,13 +254,12 @@ describe("Path-aware cascade resets children when a parent changes", () => {
       const callLog: string[] = [];
       const fetchSpy = vi.fn().mockImplementation((url: string) => {
         callLog.push(url);
-        if (url.endsWith("/path-children?path=")) {
+        if (url.endsWith("/api/kingdoms")) {
           return Promise.resolve(
-            mockFetchJson({
-              parent: taxon(0, "(root)", "domain"),
-              children: [taxon(2, "Animalia", "kingdom")],
-              next_rank_hint: "kingdom",
-            }),
+            mockFetchJson([
+              taxon(2, "Animalia", "kingdom"),
+              taxon(11, "Plantae", "kingdom"),
+            ]),
           );
         }
         if (url.includes("Animalia")) {
@@ -295,8 +298,8 @@ describe("Path-aware cascade resets children when a parent changes", () => {
       // available for that pick — Chordata must come back when the
       // user reopens the phylum dropdown.
       await waitFor(() => {
-        const animaliaCalls = callLog.filter((u) =>
-          u.includes("Animalia") && !u.endsWith("/path-children?path="),
+        const animaliaCalls = callLog.filter(
+          (u) => u.includes("Animalia") && !u.endsWith("/api/kingdoms"),
         );
         expect(animaliaCalls.length).toBeGreaterThanOrEqual(1);
       });
