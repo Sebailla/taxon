@@ -11,3 +11,4 @@ node_modules/
 dist/
 .pen
 .lighthouseci/
+frontend/pnpm-lock.yaml
