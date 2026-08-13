@@ -127,9 +127,6 @@ def test_parse_col_taxa_marks_unassigned_when_rank_is_unranked() -> None:
 
 
 def test_parse_col_taxa_raises_on_missing_required_column() -> None:
-    bad = (
-        "col:ID\tcol:rank\n"
-        "AB1C\tkingdom\n"
-    )
+    bad = "col:ID\tcol:rank\nAB1C\tkingdom\n"
     with pytest.raises(ValueError, match="missing required columns"):
         list(parse_col_taxa(bad.splitlines(keepends=True)))
