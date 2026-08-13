@@ -234,6 +234,25 @@ class LinksResponse(_ORMBase):
     links: list[SearchLinkItem]
 
 
+class PathChildrenEnvelope(_ORMBase):
+    """Envelope for ``GET /api/path-children?path=A|B|C``.
+
+    The new path-aware resolver returns ``parent`` (the deepest
+    taxon the path resolved to), ``children`` (its direct
+    children regardless of rank name), and ``next_rank_hint``
+    (the rank that appears most often among the children, so the
+    frontend can label the next dropdown).
+
+    The children list may be empty when the deepest taxon is a
+    leaf (species row). In that case ``next_rank_hint`` is null
+    so the frontend can stop emitting dropdowns.
+    """
+
+    parent: TaxonResponse
+    children: list[TaxonResponse]
+    next_rank_hint: str | None
+
+
 __all__ = [
     "AmbiguityCandidate",
     "CandidateRef",
@@ -241,6 +260,7 @@ __all__ = [
     "HealthResponse",
     "LinksResponse",
     "MarkerFlags",
+    "PathChildrenEnvelope",
     "SearchLinkItem",
     "SpeciesListItem",
     "SpeciesListResponse",

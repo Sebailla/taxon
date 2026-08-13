@@ -57,9 +57,11 @@ from taxon.api.hierarchy import (
     list_root_taxa,
     resolve_path,
 )
+from taxon.api.path_children import list_path_children
 from taxon.api.schemas import (
     LinksResponse,
     MarkerFlags,
+    PathChildrenEnvelope,
     SearchLinkItem,
     SpeciesListItem,
     SpeciesListResponse,
@@ -104,6 +106,49 @@ def _load_templates() -> tuple[SearchLink, ...]:
 def api_meta() -> dict[str, str]:
     """Smoke check that confirms the ``/api`` prefix is mounted."""
     return {"phase": "2C"}
+
+
+@router.get(
+    "/path-children",
+    response_model=PathChildrenEnvelope,
+)
+def path_children(
+    path: Annotated[
+        str,
+        Query(
+            description=(
+                "Pipe-separated path of canonical names. The endpoint "
+                "walks the segments case-insensitively against the "
+                "taxon tree and returns the direct children of the "
+                "deepest resolved taxon, regardless of rank name. "
+                "Example: ?path=Animalia%7CChordata%7CVertebrata"
+            ),
+            min_length=1,
+        ),
+    ],
+    session: Annotated[Session, Depends(get_db)],
+) -> PathChildrenEnvelope:
+    """Return the children of the deepest taxon the path resolves to.
+
+    The endpoint replaces the six rank-named cascade endpoints
+    (``/api/{kingdom}/phyla``, ``/api/.../{phylum}/classes``,
+    etc.) with a single resolver that does not assume any rank
+    order. It exists so the cascade UI can follow CoL's
+    intermediate ranks (subphylum, gigaclass, infraclass, ...).
+
+    The deep rank-named endpoints remain available and unchanged
+    for backward compatibility; their cleanup lands in a
+    follow-up PR.
+    """
+    segments = [segment for segment in path.split("|") if segment]
+    response = list_path_children(session, segments)
+    if response is None:
+        raise NotFoundError(f"taxon not found: {segments[-1]!r}")
+    return PathChildrenEnvelope(
+        parent=TaxonResponse.model_validate(response.parent),
+        children=[TaxonResponse.model_validate(child) for child in response.children],
+        next_rank_hint=response.next_rank_hint,
+    )
 
 
 @router.get("/kingdoms", response_model=list[TaxonResponse])
