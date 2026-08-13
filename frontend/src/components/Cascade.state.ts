@@ -1,50 +1,61 @@
-/** Pure reducer + helpers for the Cascade component.
+/** Pure state machine for the path-aware Cascade component.
 
 Extracted from ``Cascade.tsx`` so the component file exports only
 components (Vite's ``react-refresh`` HMR requires that for fast
 refresh to work cleanly). The reducer and helpers are pure, have
 no React imports, and can be tested in isolation.
 
-The contract is unchanged from the original in-file definition:
+The cascade renders N dropdowns — one per rank layer the backend
+has served. CoL ships 40+ ranks with intermediate ranks
+(subphylum, gigaclass, infraphylum, parvphylum, ...) that the
+fixed six-rank ladder skipped. Each layer keeps its own
+``(children, next_rank_hint)`` snapshot so the dropdowns for
+ancestor segments stay populated even after the user picks a
+descendant — the user can then change a parent and the
+descendant dropdowns reset.
 
-- ``RANKS`` — the 6-rank ordered list (Kingdom → Genus).
-- ``Rank`` — the type union derived from ``RANKS``.
-- ``cascadeReducer`` — pure reducer over ``CascadeState``.
-- ``INITIAL`` — initial state for ``useReducer``.
-- ``parentSegments`` — walks ``selected`` and returns the dense
-  prefix (Kingdom → first null).
-- ``CHILD_RANK_PATH`` — maps each parent rank to its children
-  endpoint suffix (``kingdom → "phyla"``, etc.).
+The state machine:
 
-If you change behaviour here, mirror the change in the tests
-under ``tests/Cascade.test.tsx``.
+- ``path`` is the dense list of canonical names the user has
+  picked so far. The empty path means "show the root kingdom
+  dropdown".
+- ``levelByPath`` maps ``path.join("|")`` → ``(children,
+  next_rank_hint)`` so each dropdown shows the children of its
+  own path segment. The cascade reads the keys in order to
+  render N dropdowns.
+- ``species`` is loaded separately when the cascade reaches a
+  leaf (a genus row whose children have ``next_rank_hint ===
+  null``).
 */
 
 import type { TaxonResponse } from "../api";
 import type { InclusionClass } from "./Toggles";
 
-export const RANKS = [
-  "kingdom",
-  "phylum",
-  "class",
-  "order",
-  "family",
-  "genus",
-] as const;
-export type Rank = (typeof RANKS)[number];
+export interface LevelSnapshot {
+  children: TaxonResponse[];
+  nextRankHint: string | null;
+}
 
 export interface CascadeState {
-  /** Selected segment per rank. ``null`` means unselected. */
-  selected: Record<Rank, string | null>;
-  /** Children available per rank, keyed by the parent path. */
-  children: Record<Rank, TaxonResponse[]>;
-  /** Async status for each level — empty object means idle. */
-  childrenStatus: Record<Rank, "idle" | "loading" | "error">;
-  /** The active async request, used to abort stale calls. */
-  generation: number;
+  /** Path of canonical names the user has picked so far. */
+  path: string[];
+  /**
+   * Snapshot per path segment. Keys are the path up to and
+   * including that segment, joined by ``|``. The first key is
+   * the empty string (the kingdom list); each subsequent key
+   * extends the path by one segment. The cascade renders one
+   * dropdown per key in insertion order.
+   */
+  levelByPath: Record<string, LevelSnapshot>;
+  /**
+   * Async status for the most recent /path-children call.
+   * ``"loading"`` while a new fetch is in flight; ``"error"``
+   * when the last call returned a non-OK result.
+   */
+  currentLevelStatus: "idle" | "loading" | "error";
   /** Inclusion toggles (default empty = accepted only). */
   include: Set<InclusionClass>;
-  /** Species list for the current genus. */
+  /** Species list for the current genus (when the cascade has reached one). */
   species: TaxonResponse[];
   /** Species-list cursor and load status. */
   speciesStatus: "idle" | "loading" | "error";
@@ -52,80 +63,91 @@ export interface CascadeState {
 }
 
 export type Action =
-  | { type: "set-segment"; rank: Rank; value: string | null }
-  | { type: "set-children"; rank: Rank; rows: TaxonResponse[] }
-  | { type: "set-status"; rank: Rank; status: "idle" | "loading" | "error" }
+  | { type: "set-path"; path: string[] }
+  | { type: "set-current-level"; pathKey: string; snapshot: LevelSnapshot }
+  | { type: "set-current-level-status"; status: "idle" | "loading" | "error" }
   | { type: "set-include"; include: Set<InclusionClass> }
   | { type: "set-species"; rows: TaxonResponse[]; cursor: string | null }
   | { type: "set-species-status"; status: "idle" | "loading" | "error" }
-  | { type: "bump-generation" };
+  | { type: "clear-species" };
 
 export const INITIAL: CascadeState = {
-  selected: {
-    kingdom: null,
-    phylum: null,
-    class: null,
-    order: null,
-    family: null,
-    genus: null,
-  },
-  children: {
-    kingdom: [],
-    phylum: [],
-    class: [],
-    order: [],
-    family: [],
-    genus: [],
-  },
-  childrenStatus: {
-    kingdom: "idle",
-    phylum: "idle",
-    class: "idle",
-    order: "idle",
-    family: "idle",
-    genus: "idle",
-  },
-  generation: 0,
+  path: [],
+  levelByPath: {},
+  currentLevelStatus: "loading",
   include: new Set<InclusionClass>(),
   species: [],
   speciesStatus: "idle",
   speciesCursor: null,
 };
 
+/** Path key used in ``levelByPath``. ``""`` for the root. */
+export function pathKey(path: readonly string[]): string {
+  return path.join("|");
+}
+
 /** Pure reducer; testable in isolation. */
 export function cascadeReducer(state: CascadeState, action: Action): CascadeState {
   switch (action.type) {
-    case "set-segment": {
-      const next: CascadeState = {
-        ...state,
-        selected: { ...state.selected, [action.rank]: action.value },
+    case "set-path": {
+      // When the path changes (a dropdown emits a new value), we
+      // keep the level snapshots for the path prefixes that are
+      // still valid. Anything strictly beyond the new path's
+      // length is dropped so a parent edit clears stale children.
+      const newKey = pathKey(action.path);
+      const nextLevelByPath: Record<string, LevelSnapshot> = {};
+      // Walk prefixes of the new path and copy matching snapshots.
+      for (let i = 0; i <= action.path.length; i += 1) {
+        const prefix = action.path.slice(0, i);
+        const k = pathKey(prefix);
+        if (state.levelByPath[k] !== undefined) {
+          nextLevelByPath[k] = state.levelByPath[k];
+        }
+        // Avoid unused-loop warning.
+        void prefix;
+      }
+      // Mark the new deepest path as loading so the dropdown
+      // shows the "Loading children…" placeholder until the
+      // /path-children call returns. The placeholder's
+      // ``nextRankHint`` is undefined (not null) so the species
+      // fetch below does not mistake "we haven't fetched yet"
+      // for "we have reached a leaf".
+      nextLevelByPath[newKey] = state.levelByPath[newKey] ?? {
+        children: [],
+        nextRankHint: undefined,
       };
-      // Reset every child of the changed rank.
-      const idx = RANKS.indexOf(action.rank);
-      for (let i = idx + 1; i < RANKS.length; i += 1) {
-        const childRank = RANKS[i] as Rank;
-        next.selected = { ...next.selected, [childRank]: null };
-        next.children = { ...next.children, [childRank]: [] };
-        next.childrenStatus = { ...next.childrenStatus, [childRank]: "idle" };
-      }
-      if (action.rank === "genus") {
-        next.species = [];
-        next.speciesCursor = null;
-        next.speciesStatus = "idle";
-      }
-      return next;
-    }
-    case "set-children": {
+      const isNewDeepestLevel = !state.levelByPath[newKey];
       return {
         ...state,
-        children: { ...state.children, [action.rank]: action.rows },
+        path: action.path,
+        levelByPath: nextLevelByPath,
+        currentLevelStatus: isNewDeepestLevel ? "loading" : "idle",
+        species: [],
+        speciesCursor: null,
+        // Reset the species-list status to loading when the path
+        // changes so the SpeciesList renders the "Loading children…"
+        // placeholder instead of the misleading "No children."
+        // state. The second useEffect below will either dispatch
+        // "error" or a populated species list when the next-rank
+        // snapshot resolves.
+        speciesStatus: "loading",
       };
     }
-    case "set-status": {
+    case "set-current-level": {
+      // Cache the snapshot under its path key so ancestor
+      // dropdowns stay populated after the user picks a
+      // descendant.
       return {
         ...state,
-        childrenStatus: { ...state.childrenStatus, [action.rank]: action.status },
+        levelByPath: {
+          ...state.levelByPath,
+          [action.pathKey]: action.snapshot,
+        },
+        currentLevelStatus: "idle",
       };
+    }
+    case "set-current-level-status": {
+      return { ...state, currentLevelStatus: action.status };
     }
     case "set-include": {
       return { ...state, include: action.include };
@@ -136,38 +158,18 @@ export function cascadeReducer(state: CascadeState, action: Action): CascadeStat
     case "set-species-status": {
       return { ...state, speciesStatus: action.status };
     }
-    case "bump-generation": {
-      return { ...state, generation: state.generation + 1 };
+    case "clear-species": {
+      return { ...state, species: [], speciesCursor: null, speciesStatus: "idle" };
     }
   }
 }
 
 /**
- * Walk the selected map and return the dense prefix (Kingdom →
- * first null). Used to build the API path for the children and
- * species endpoints.
+ * Walk ``path`` and return the dense prefix (every entry until
+ * the first null). The path is always dense today; this helper
+ * is kept for symmetry with the legacy ``parentSegments`` and
+ * for the case where a future action introduces a null gap.
  */
-export function parentSegments(selected: Record<Rank, string | null>): string[] {
-  const segs: string[] = [];
-  for (const r of RANKS) {
-    const value = selected[r];
-    if (value === null) break;
-    segs.push(value);
-  }
-  return segs;
+export function densePath(path: string[]): string[] {
+  return path.filter((segment) => segment !== null && segment !== undefined);
 }
-
-/**
- * Maps the parent rank to the path segment of the children
- * endpoint. The endpoint ``/api/<kingdom>/<phyla>`` serves the
- * phylum children of a kingdom, so a kingdom has ``"phyla"`` as
- * its child rank. ``genus`` is excluded — the species list is
- * served by a dedicated effect, not by this map.
- */
-export const CHILD_RANK_PATH: Record<Exclude<Rank, "genus">, string> = {
-  kingdom: "phyla",
-  phylum: "classes",
-  class: "orders",
-  order: "families",
-  family: "genera",
-};
