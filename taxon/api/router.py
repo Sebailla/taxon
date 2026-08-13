@@ -74,6 +74,7 @@ from taxon.api.species import (
     list_species_page,
     parse_include,
 )
+from taxon.api.species_list import list_species_at_path
 from taxon.schema import Taxon
 from taxon.search_links import SearchLink, build_search_links, load_templates
 
@@ -149,6 +150,63 @@ def path_children(
         children=[TaxonResponse.model_validate(child) for child in response.children],
         next_rank_hint=response.next_rank_hint,
     )
+
+
+@router.get(
+    "/species-list",
+    response_model=SpeciesListResponse,
+)
+def species_list(
+    path: Annotated[
+        str,
+        Query(
+            description=(
+                "Pipe-separated path of canonical names. The endpoint "
+                "walks the segments case-insensitively (same contract as "
+                "/api/path-children) and returns the species-rank children "
+                "of the deepest resolved taxon, paginated. Example: "
+                "?path=Animalia%7CChordata%7CVertebrata%7CGnathostomata%7C"
+                "Osteichthyes%7CActinopterygii%7CActinopteri%7CTeleostei%7C"
+                "Gadiformes%7CGadoidei%7CGadidae%7CGadus"
+            ),
+            min_length=1,
+        ),
+    ],
+    session: Annotated[Session, Depends(get_db)],
+    include: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Comma-separated inclusion classes "
+                "(synonyms, extinct, uncertain, unassigned). "
+                "Default is accepted-only."
+            )
+        ),
+    ] = None,
+    cursor: Annotated[
+        str | None,
+        Query(description="Pagination cursor returned in next_cursor."),
+    ] = None,
+) -> SpeciesListResponse:
+    """Return the species list at the deepest taxon the path resolves to.
+
+    The legacy six-fixed-rank endpoint
+    (``/api/{kingdom}/{phylum}/{class}/{order}/{family}/{genus}/species``)
+    cannot serve CoL paths that contain intermediate ranks
+    (subphylum, gigaclass, ...). This path-aware endpoint accepts
+    any chain length and returns the species children of the
+    deepest resolved taxon.
+    """
+    segments = [segment for segment in path.split("|") if segment]
+    items, next_cursor, error_detail = list_species_at_path(
+        session,
+        segments,
+        include=include,
+        cursor=cursor,
+    )
+    if items is None:
+        raise NotFoundError(error_detail or "taxon not found")
+    return SpeciesListResponse(items=items, next_cursor=next_cursor)
 
 
 @router.get("/kingdoms", response_model=list[TaxonResponse])
