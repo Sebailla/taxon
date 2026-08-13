@@ -71,14 +71,12 @@ describe("Cascade UI: loading and empty states", () => {
       screen.getByRole("combobox", { name: "Kingdom" }),
     ).toBeDisabled();
 
-    // Resolve the kingdoms fetch.
+    // Resolve the kingdoms fetch. /api/kingdoms returns a
+    // TaxonResponse[] (the legacy shape, not the path-children
+    // envelope).
     await act(async () => {
       resolveFetch!(
-        mockFetchJson({
-          parent: taxon(0, "(root)", "domain"),
-          children: [taxon(2, "Animalia", "kingdom")],
-          next_rank_hint: "kingdom",
-        }),
+        mockFetchJson([taxon(2, "Animalia", "kingdom")]),
       );
     });
 
@@ -96,13 +94,11 @@ describe("Cascade UI: loading and empty states", () => {
     // renders the empty state.
     globalThis.fetch = vi
       .fn()
+      // 1. /api/kingdoms (root).
       .mockResolvedValueOnce(
-        mockFetchJson({
-          parent: taxon(0, "(root)", "domain"),
-          children: [taxon(2, "Animalia", "kingdom")],
-          next_rank_hint: "kingdom",
-        }),
+        mockFetchJson([taxon(2, "Animalia", "kingdom")]),
       )
+      // 2. /path-children?path=Animalia.
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(2, "Animalia", "kingdom"),
@@ -141,13 +137,9 @@ describe("Cascade UI: inclusion toggles", () => {
     // regardless of which dropdown the user picks first.
     const fetchMock = vi
       .fn()
-      // 1. Initial root kingdom fetch.
+      // 1. Initial root kingdom fetch via /api/kingdoms.
       .mockResolvedValueOnce(
-        mockFetchJson({
-          parent: taxon(0, "(root)", "domain"),
-          children: [taxon(2, "Animalia", "kingdom")],
-          next_rank_hint: "kingdom",
-        }),
+        mockFetchJson([taxon(2, "Animalia", "kingdom")]),
       )
       // 2. After picking Animalia.
       .mockResolvedValueOnce(

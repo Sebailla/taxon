@@ -50,6 +50,7 @@ import {
 import {
   type TaxonResponse,
   buildBreadcrumb,
+  fetchKingdoms,
   fetchPathChildren,
   fetchSpeciesList,
 } from "../api";
@@ -60,29 +61,50 @@ export function Cascade(): JSX.Element {
   // When the path changes, ask the backend for the children of
   // the deepest resolved taxon. Abort the in-flight call when a
   // new selection supersedes it.
+  //
+  // The empty path is the cascade root: the path-aware
+  // ``/api/path-children?path=`` endpoint rejects the empty path
+  // with a 422 (its ``min_length=1`` constraint), so the root
+  // fetch goes through the dedicated ``/api/kingdoms`` endpoint
+  // instead. Both endpoints return ``TaxonResponse[]``, so the
+  // snapshot is identical regardless of which fetcher ran.
   useEffect(() => {
     const ctrl = new AbortController();
     const key = pathKey(state.path);
-    void fetchPathChildren(densePath(state.path), { signal: ctrl.signal }).then(
-      (result) => {
-        if (ctrl.signal.aborted) return;
+    const onSuccess = (children: TaxonResponse[], nextRankHint: string | null) => {
+      if (ctrl.signal.aborted) return;
+      dispatch({
+        type: "set-current-level",
+        pathKey: key,
+        snapshot: { children, nextRankHint },
+      });
+    };
+    const onError = () => {
+      if (ctrl.signal.aborted) return;
+      dispatch({
+        type: "set-current-level-status",
+        status: "error",
+      });
+    };
+    if (state.path.length === 0) {
+      void fetchKingdoms({ signal: ctrl.signal }).then((result) => {
         if (result.status === "ok") {
-          dispatch({
-            type: "set-current-level",
-            pathKey: key,
-            snapshot: {
-              children: result.data.children,
-              nextRankHint: result.data.next_rank_hint,
-            },
-          });
+          onSuccess(result.data, "kingdom");
         } else {
-          dispatch({
-            type: "set-current-level-status",
-            status: "error",
-          });
+          onError();
         }
-      },
-    );
+      });
+    } else {
+      void fetchPathChildren(densePath(state.path), { signal: ctrl.signal }).then(
+        (result) => {
+          if (result.status === "ok") {
+            onSuccess(result.data.children, result.data.next_rank_hint);
+          } else {
+            onError();
+          }
+        },
+      );
+    }
     return () => ctrl.abort();
   }, [state.path]);
 
