@@ -73,6 +73,12 @@ export interface LinksResponse {
   links: SearchLinkItem[];
 }
 
+export interface PathChildrenResponse {
+  parent: TaxonResponse;
+  children: TaxonResponse[];
+  next_rank_hint: string | null;
+}
+
 export interface AmbiguityCandidate {
   id: number;
   canonical_name: string;
@@ -169,6 +175,28 @@ export async function fetchChildren(
   );
 }
 
+/**
+ * Path-aware cascade helper. Walks the caller-supplied path of
+ * canonical names and returns the direct children of the deepest
+ * resolved taxon, regardless of rank name. ``next_rank_hint`` is
+ * the rank that occurs most often among the children (the mode),
+ * or ``null`` when the children are empty (the cascade has reached
+ * a leaf).
+ *
+ * This is the building block for the dynamic cascade: each call
+ * returns the children for the next dropdown. The frontend renders
+ * a new dropdown per non-empty response until ``next_rank_hint``
+ * is null, at which point it loads the species list for the
+ * deepest taxon via :func:`fetchSpeciesList`.
+ */
+export async function fetchPathChildren(
+  parentSegments: string[],
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<PathChildrenResponse>> {
+  const path = parentSegments.map(encodeURIComponent).join("|");
+  return apiGet<PathChildrenResponse>(`/path-children?path=${path}`, init);
+}
+
 export async function fetchSpecies(
   parentSegments: string[],
   init?: {
@@ -190,6 +218,42 @@ export async function fetchSpecies(
     `/${encodeSegments(parentSegments)}/species${tail}`,
     init,
   );
+}
+
+/**
+ * Path-aware species-list resolver.
+ *
+ * Walks the caller-supplied path (same contract as
+ * :func:`fetchPathChildren`) and returns the species-rank children
+ * of the deepest resolved taxon, paginated. Used by the cascade
+ * when the deepest snapshot has ``next_rank_hint = null`` —
+ * i.e. the cascade has reached a genus row and the frontend
+ * needs the species under it.
+ *
+ * The path must include the genus as the last segment. The
+ * resolver walks the path case-insensitively and returns a 404
+ * (translated to ``ApiResult.not-found``) when any segment does
+ * not resolve.
+ */
+export async function fetchSpeciesList(
+  pathSegments: string[],
+  init?: {
+    signal?: AbortSignal;
+    include?: InclusionClass[];
+    cursor?: string;
+  },
+): Promise<ApiResult<SpeciesListResponse>> {
+  const path = pathSegments.map(encodeURIComponent).join("|");
+  const params = new URLSearchParams();
+  if (init?.include && init.include.length > 0) {
+    params.set("include", init.include.join(","));
+  }
+  if (init?.cursor) {
+    params.set("cursor", init.cursor);
+  }
+  const query = params.toString();
+  const tail = query.length > 0 ? `?${query}` : "";
+  return apiGet<SpeciesListResponse>(`/species-list?path=${path}${tail}`, init);
 }
 
 export async function fetchSpeciesByPair(
