@@ -157,6 +157,7 @@ class SpeciesListItem(_ORMBase):
     display_name: str
     rank: str
     parent_id: int | None = None
+    parent_segments: list[str] = Field(default_factory=list)
 
     is_synonym: bool = False
     is_extinct: bool = False
