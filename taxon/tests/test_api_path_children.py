@@ -95,7 +95,12 @@ def seeded_app(tmp_path: Path) -> FastAPI:
     src_path = tmp_path / "dataset.txt"
     src_path.write_text(HIERARCHY_FIXTURE, encoding="utf-8")
     import_dataset(src_path, db_path, batch_size=64)
-    return create_app(database_url=f"sqlite:///{db_path}")
+    app = create_app(database_url=f"sqlite:///{db_path}")
+    # Expose the db_path so tests that need to seed additional rows
+    # can use it directly (FastAPI's State object isn't safely
+    # accessible from inside request handlers).
+    app.state.db_path = db_path
+    return app
 
 
 @pytest.fixture
@@ -182,15 +187,16 @@ def test_path_children_returns_subphylum_when_class_was_assumed(
 
     The old endpoint ``/api/Animalia/Chordata/classes`` returned
     ``[]`` because no Chordata child has rank == 'class'. The
-    new endpoint surfaces the subphylum instead and the
-    ``next_rank_hint`` reflects that, so the frontend can render a
-    'subphylum' dropdown and continue the cascade."""
+    new endpoint surfaces the subphylum instead. The
+    ``next_rank_hint`` is now the bucket name so the dropdown
+    label stays stable across the 40+ intermediate ranks CoL
+    publishes — subphylum collapses into the ``phylum`` bucket."""
     with _client(seeded_intermediate_app) as client:
         body = client.get("/api/path-children?path=Animalia%7CChordata").json()
 
     assert body["parent"]["name"] == "Chordata"
     assert [child["name"] for child in body["children"]] == ["Vertebrata"]
-    assert body["next_rank_hint"] == "subphylum"
+    assert body["next_rank_hint"] == "phylum"
 
 
 def test_path_children_chains_through_subphylum_to_class(
@@ -337,3 +343,90 @@ def test_old_phyla_endpoint_still_works(seeded_app: FastAPI) -> None:
         body = client.get("/api/Animalia/phyla").json()
 
     assert [item["name"] for item in body] == ["Chordata"]
+
+
+# ---------------------------------------------------------------------------
+# Cascade display_level filter — unranked rows and historical ranks are
+# hidden from the cascade UI to keep the dropdowns manageable.
+# ---------------------------------------------------------------------------
+
+
+def test_path_children_excludes_unranked_rows(seeded_app: FastAPI) -> None:
+    """``unranked`` is the canonical "exclude from cascade" signal. The
+    resolver must filter it out so the cascade UI does not show millions
+    of placeholder rows that CoL ships awaiting taxonomic review."""
+    import sqlite3
+
+    db_path = seeded_app.state.db_path
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        INSERT INTO taxa (
+            source_id, parent_id, rank, name, display_name, display_level,
+            is_synonym, is_extinct, is_uncertain, is_unassigned
+        )
+        VALUES (?, ?, ?, ?, ?, NULL, 0, 0, 0, 0)
+        """,
+        ("urn:unranked-1", 1, "unranked", "Incertae_sedis_A", "Incertae sedis A"),
+    )
+    conn.commit()
+    conn.close()
+
+    with _client(seeded_app) as client:
+        body = client.get("/api/path-children?path=Animalia").json()
+
+    names = [child["name"] for child in body["children"]]
+    assert "Chordata" in names
+    assert "Incertae_sedis_A" not in names
+
+
+def test_path_children_excludes_historical_ranks(seeded_app: FastAPI) -> None:
+    """Historical ranks (``proles``, ``natio``, ``lusus``, ...) used by
+    19th-century taxonomy must not leak into the cascade. The CoL
+    archive carries a few thousand of them; the resolver filters them
+    via the whitelist in :mod:`taxon.taxonomy`."""
+    import sqlite3
+
+    db_path = seeded_app.state.db_path
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        """
+        INSERT INTO taxa (
+            source_id, parent_id, rank, name, display_name, display_level,
+            is_synonym, is_extinct, is_uncertain, is_unassigned
+        )
+        VALUES (?, ?, ?, ?, ?, NULL, 0, 0, 0, 0)
+        """,
+        [
+            ("urn:proles-1", 1, "proles", "Proles procumbens", "Proles procumbens"),
+            ("urn:natio-1", 1, "natio", "Natio alpina", "Natio alpina"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    with _client(seeded_app) as client:
+        body = client.get("/api/path-children?path=Animalia").json()
+
+    names = [child["name"] for child in body["children"]]
+    assert "Proles procumbens" not in names
+    assert "Natio alpina" not in names
+
+
+def test_next_rank_hint_is_a_cascade_bucket_not_a_raw_rank(
+    seeded_app: FastAPI
+) -> None:
+    """The frontend renders the next dropdown label from the
+    display_level bucket, not the child's raw rank. This is what
+    lets the cascade UI keep ``class Rank Name`` as the dropdown
+    label even when CoL publishes the intermediate rank
+    ``superclass`` or ``infraclass``."""
+    with _client(seeded_app) as client:
+        body = client.get("/api/path-children?path=Animalia").json()
+
+    # Chordata is the (only) phylum-level child of Animalia in the
+    # fixture. The hint for the next dropdown is the modal bucket
+    # among the children of Animalia = "phylum" (Chordata is the
+    # only child the cascade sees). The frontend uses this to label
+    # the next dropdown instead of having to map rank -> drop label.
+    assert body["next_rank_hint"] == "phylum"

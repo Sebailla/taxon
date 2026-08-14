@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from taxon.parser import ParsedTaxon, parse_taxa
 from taxon.schema import Base, SpeciesPath, Taxon
+from taxon.taxonomy import display_level
 
 DEFAULT_SOURCE = Path("/Users/sebailla/Developer/research/worm/dataset-2011.txt")
 DEFAULT_DATABASE = Path("data/taxon.db")
@@ -99,9 +100,12 @@ def _insert_taxon_batch(
     rows: list[dict[str, Any]],
     source_to_database_id: dict[str, int],
 ) -> None:
+    rows_with_bucket = [
+        {**row, "display_level": display_level(row["rank"])} for row in rows
+    ]
     with engine.begin() as connection:
-        connection.execute(insert(Taxon), rows)
-        source_ids = [row["source_id"] for row in rows]
+        connection.execute(insert(Taxon), rows_with_bucket)
+        source_ids = [row["source_id"] for row in rows_with_bucket]
         inserted = connection.execute(
             select(Taxon.source_id, Taxon.id).where(Taxon.source_id.in_(source_ids))
         )
