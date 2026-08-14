@@ -133,32 +133,61 @@ def _resolve_deepest(segments: list[str], client: ChecklistBankClient) -> Checkl
     The cascade path is a list of canonical names. The resolver
     walks the segments in order, asking CLB for the taxon that
     matches the segment's canonical name at the rank appropriate
-    to the segment's position in the path. CLB's
-    ``/nameusage/search`` endpoint has no parent-anchor filter, so
-    the resolver relies on the ``rank=R`` anchor at each step to
-    keep same-named taxa from colliding (e.g. ``Panthera`` at genus
-    depth vs. ``Panthera`` at any other rank).
+    to the segment's position in the path.
 
-    The first segment is the cascade root: either ``"Biota"``
-    (rank = ``biota``) or a kingdom name like ``"Animalia"``
-    (rank = ``kingdom``). Subsequent segments advance one slot
-    through :data:`CASCADE_TIERS`.
+    **Root tier shortcut.** The first segment can be one of the
+    two top-tier names ``"Biota"`` or ``"Viruses"``. CLB's
+    ``/nameusage/search`` endpoint rejects searches with
+    ``rank=biota`` (it returns HTTP 400 because the root tier is
+    not searchable on its own), so the resolver shortcuts the
+    first segment through ``get_taxon`` with the well-known id
+    found in :data:`_ROOT_TAXON_BY_NAME`. Subsequent segments
+    are walked with the standard rank-anchored search.
 
-    The walk aborts on the first segment that does not resolve and
-    returns ``None`` — partial paths do NOT yield a "deepest match"
-    result. CLB has no ``higherTaxonKey`` to fall back on for
-    disambiguation, so a half-matching path would just be a
-    different taxon than the one the user requested.
+    **Subsequent segments** advance one slot through
+    :data:`CASCADE_TIERS` and use ``client.search(segment,
+    rank=...)`` to bind the canonical name to a CLB taxon id.
+    CLB's search has no ``higherTaxonKey`` filter, so the
+    ``rank=R`` anchor at each step keeps same-named taxa from
+    colliding (e.g. ``Panthera`` at genus depth vs. ``Panthera``
+    at any other rank).
+
+    **Failure mode.** The walk aborts on the first segment that
+    does not resolve and returns ``None`` — partial paths do NOT
+    yield a "deepest match" result. CLB has no
+    ``higherTaxonKey`` to fall back on for disambiguation, so a
+    half-matching path would just be a different taxon than the
+    one the user requested.
     """
     if not segments:
         return None
 
-    tier_index = _first_tier_index(segments[0])
-    if tier_index is None:
-        return None
+    first_segment = segments[0]
+    root_id = _ROOT_TAXON_BY_NAME.get(first_segment.lower())
+    if root_id is not None:
+        # Root-tier shortcut: bind the well-known id with
+        # ``get_taxon`` (no search). After this binding the
+        # resolver has resolved the ``biota`` tier, so the
+        # next segment to walk is ``kingdom`` (tier_index=1).
+        current = client.get_taxon(root_id)
+        if current is None:
+            return None
+        next_segment_index = 1
+        tier_index = 1  # next segment lives at "kingdom"
+    else:
+        # Non-root first segment: bind as kingdom via a
+        # rank-anchored search. After this binding the resolver
+        # has resolved the ``kingdom`` tier, so the next
+        # segment to walk is ``phylum`` (tier_index=2).
+        hits = client.search(first_segment, rank=CASCADE_TIERS[1])
+        hit = _first_match(hits, first_segment)
+        if hit is None:
+            return None
+        current = hit
+        next_segment_index = 1
+        tier_index = 2  # next segment lives at "phylum"
 
-    current: ChecklistBankTaxon | None = None
-    for offset, segment in enumerate(segments):
+    for offset, segment in enumerate(segments[next_segment_index:]):
         rank_index = tier_index + offset
         if rank_index >= len(CASCADE_TIERS):
             # Path went past species; CLB has no rank past
@@ -174,23 +203,16 @@ def _resolve_deepest(segments: list[str], client: ChecklistBankClient) -> Checkl
     return current
 
 
-def _first_tier_index(first_segment: str) -> int | None:
-    """Return the cascade tier index for the first segment.
-
-    The cascade root is either ``"Biota"`` (rank = ``biota``,
-    index 0) or any kingdom name (rank = ``kingdom``, index 1).
-    Names that are not the cascade root return ``None`` — the
-    resolver treats them as a failed match.
-
-    A more robust alternative would issue an unranked search to
-    detect the segment's rank, but that costs an extra HTTP call
-    per path resolution. The hardcoded dispatcher keeps the
-    walk to ``N + 1`` calls (one search per segment plus one
-    children fetch for the leaf).
-    """
-    if first_segment.lower() == "biota":
-        return 0
-    return 1
+#: Well-known CLB ids for the two cascade top-tier taxa. CLB
+#: assigns the root tier opaque string ids that never change
+#: across releases. The resolver shortcuts the first segment
+#: through these ids because ``/nameusage/search`` returns
+#: HTTP 400 when the ``rank=`` filter targets ``"biota"`` (the
+#: root is not searchable on its own).
+_ROOT_TAXON_BY_NAME: dict[str, str] = {
+    "biota": "5T6MX",
+    "viruses": "V",
+}
 
 
 def _first_match(hits: list[ChecklistBankTaxon], segment: str) -> ChecklistBankTaxon | None:
@@ -214,7 +236,7 @@ def _next_tier_for(rank: str) -> str | None:
     The cascade walks one tier per dropdown click. Given a parent
     at ``rank``, the next dropdown shows the parent's children at
     the rank that maps to the next cascade tier. Returns
-    ``None`` when the chain has reached the leaf and there is
+    ``None`` when the chain has reached a leaf and there is
     no next tier.
 
     The mapping matches the 9-tier tuple. For phylum parents the
@@ -222,7 +244,13 @@ def _next_tier_for(rank: str) -> str | None:
     logic in :func:`_children_for` may collapse that to ``"class"``
     when the phylum has no subphylum children (the subphylum
     collapse rule from PR #2b).
+
+    CLB publishes the root tier (``Biota`` / ``Viruses``) under
+    rank ``"unranked"`` rather than ``"biota"``; the resolver
+    normalises that through :func:`_normalize_root_rank` so the
+    mapping below can be a flat dict lookup.
     """
+    rank = _normalize_root_rank(rank)
     cascade_next_tier: dict[str, str] = {
         "biota": "kingdom",
         "kingdom": "phylum",
@@ -235,6 +263,21 @@ def _next_tier_for(rank: str) -> str | None:
         "species": "species",
     }
     return cascade_next_tier.get(rank.lower())
+
+
+def _normalize_root_rank(rank: str) -> str:
+    """Map CLB's ``"unranked"`` label to the resolver's ``"biota"`` tier.
+
+    CLB publishes ``Biota`` / ``Viruses`` under the rank label
+    ``"unranked"`` rather than ``"biota"`` because the curated
+    CoL taxonomy has not assigned them a Linnaean rank. The
+    resolver treats them as the cascade's "biota" root tier
+    so the rest of the resolver can keep a single key space
+    keyed on :data:`CASCADE_TIERS`.
+    """
+    if rank.lower() == "unranked":
+        return "biota"
+    return rank
 
 
 def _children_for(
