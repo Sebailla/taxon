@@ -32,6 +32,12 @@ testpaths = ["taxon/tests"]
 target-version = "py311"
 line-length = 100
 
+[tool.ruff.format]
+exclude = [
+    "openspec/**",
+    "documents-es/openspec/**",
+]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
