@@ -252,7 +252,11 @@ def test_path_children_404_when_segment_unknown() -> None:
 
 
 def test_species_list_returns_species_under_genus() -> None:
-    """A 6-segment path that lands at Panthera returns its species."""
+    """A 6-segment path that lands at Panthera returns its species.
+
+    The path includes the ``class`` tier (Mammalia) so the
+    resolver has to drill through every tier.
+    """
     transport = httpx.MockTransport(
         lambda req: {
             ("GET", _search_url("Animalia", rank="KINGDOM")): httpx.Response(
@@ -271,12 +275,20 @@ def test_species_list_returns_species_under_genus() -> None:
                     "results": [_row(44, "Chordata", "PHYLUM", parent_key=1)],
                 },
             ),
-            ("GET", _search_url("Carnivora", rank="ORDER", parent_key=44)): httpx.Response(
+            ("GET", _search_url("Mammalia", rank="CLASS", parent_key=44)): httpx.Response(
                 200,
                 json={
                     "offset": 0,
                     "limit": 20,
-                    "results": [_row(732, "Carnivora", "ORDER", parent_key=44)],
+                    "results": [_row(359, "Mammalia", "CLASS", parent_key=44)],
+                },
+            ),
+            ("GET", _search_url("Carnivora", rank="ORDER", parent_key=359)): httpx.Response(
+                200,
+                json={
+                    "offset": 0,
+                    "limit": 20,
+                    "results": [_row(732, "Carnivora", "ORDER", parent_key=359)],
                 },
             ),
             ("GET", _search_url("Felidae", rank="FAMILY", parent_key=732)): httpx.Response(
@@ -315,7 +327,7 @@ def test_species_list_returns_species_under_genus() -> None:
     app = _app_with_client(client)
     with _client(app) as test_client:
         response = test_client.get(
-            "/api/species-list?path=Animalia%7CChordata%7CCarnivora%7CFelidae%7CPanthera"
+            "/api/species-list?path=Animalia%7CChordata%7CMammalia%7CCarnivora%7CFelidae%7CPanthera"
         )
     assert response.status_code == 200
     body = response.json()

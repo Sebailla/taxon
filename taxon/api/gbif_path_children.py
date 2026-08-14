@@ -43,6 +43,7 @@ from taxon.taxonomy import RANK_TO_DISPLAY_LEVEL
 CASCADE_TIERS: tuple[str, ...] = (
     "kingdom",
     "phylum",
+    "class",
     "order",
     "family",
     "genus",

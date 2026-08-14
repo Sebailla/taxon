@@ -122,13 +122,23 @@ def _search_200(rows: list[dict[str, Any]]) -> httpx.Response:
 # ---------------------------------------------------------------------------
 
 
-def test_cascade_tiers_are_six_collapsed() -> None:
-    """GBIF exposes exactly 6 cascade tiers, in this order. The
+def test_cascade_tiers_are_seven_collapsed() -> None:
+    """GBIF exposes exactly 7 cascade tiers, in this order. The
     cascade UI renders one dropdown per tier; the order matters
-    because the UI walks the path depth-first."""
+    because the UI walks the path depth-first.
+
+    The seven tiers include ``class`` between ``phylum`` and
+    ``order``. Skipping it (e.g. the previous six-tier definition
+    that started at kingdom and went phylum->order directly) made
+    the resolver's depth-to-rank map miss the class tier, so any
+    path that tried to walk ``...|Chordata|Mammalia|Carnivora``
+    returned Chordata's children instead of drilling into
+    Mammalia. The fix: include ``class``.
+    """
     assert CASCADE_TIERS == (
         "kingdom",
         "phylum",
+        "class",
         "order",
         "family",
         "genus",
@@ -162,9 +172,14 @@ def test_resolves_kingdom_animalia() -> None:
 
 
 def test_resolves_full_chain_to_panthera_genus() -> None:
-    """A 5-segment path resolves to the Panthera genus. Each
+    """A 6-segment path resolves to the Panthera genus. Each
     segment's search is scoped to the parent via
-    ``higherTaxonKey`` and to the cascade tier via ``rank``."""
+    ``higherTaxonKey`` and to the cascade tier via ``rank``.
+
+    The path includes the ``class`` tier (Mammalia between
+    Chordata phylum and Carnivora order) so the resolver has to
+    drill through every tier, not skip ``class``.
+    """
     transport = _transport(
         {
             ("GET", _search_path("Animalia", rank="KINGDOM")): _search_200(
@@ -173,8 +188,11 @@ def test_resolves_full_chain_to_panthera_genus() -> None:
             ("GET", _search_path("Chordata", parent_key=1, rank="PHYLUM")): _search_200(
                 [_row(44, "Chordata", "PHYLUM", parent_key=1)]
             ),
-            ("GET", _search_path("Carnivora", parent_key=44, rank="ORDER")): _search_200(
-                [_row(732, "Carnivora", "ORDER", parent_key=44)]
+            ("GET", _search_path("Mammalia", parent_key=44, rank="CLASS")): _search_200(
+                [_row(359, "Mammalia", "CLASS", parent_key=44)]
+            ),
+            ("GET", _search_path("Carnivora", parent_key=359, rank="ORDER")): _search_200(
+                [_row(732, "Carnivora", "ORDER", parent_key=359)]
             ),
             ("GET", _search_path("Felidae", parent_key=732, rank="FAMILY")): _search_200(
                 [_row(9702, "Felidae", "FAMILY", parent_key=732)]
@@ -187,7 +205,7 @@ def test_resolves_full_chain_to_panthera_genus() -> None:
     )
     client = GbifClient(client=httpx.Client(transport=transport))
     response = list_path_children(
-        ["Animalia", "Chordata", "Carnivora", "Felidae", "Panthera"],
+        ["Animalia", "Chordata", "Mammalia", "Carnivora", "Felidae", "Panthera"],
         client=client,
     )
     assert response is not None
@@ -215,19 +233,24 @@ def test_returns_none_when_segment_does_not_resolve() -> None:
 def test_returns_deepest_match_when_segment_does_not_resolve() -> None:
     """When the second segment has no children in GBIF, the
     resolver returns the deepest match that did chain. The
-    cascade UI renders the partial path; the user re-picks."""
+    cascade UI renders the partial path; the user re-picks.
+
+    Uses Cnidaria as the failing phylum: Animalia has Cnidaria
+    under its phylum tier in the live API, so we use a
+    placeholder ``Absentia`` that the mock returns no hits for.
+    """
     transport = _transport(
         {
             ("GET", _search_path("Animalia", rank="KINGDOM")): _search_200(
                 [_row(1, "Animalia", "KINGDOM")]
             ),
-            ("GET", _search_path("Aves", parent_key=1, rank="PHYLUM")): _search_200(
-                []  # no Aves phylum under Animalia
+            ("GET", _search_path("Absentia", parent_key=1, rank="PHYLUM")): _search_200(
+                []  # no Absentia phylum under Animalia
             ),
         }
     )
     client = GbifClient(client=httpx.Client(transport=transport))
-    response = list_path_children(["Animalia", "Aves"], client=client)
+    response = list_path_children(["Animalia", "Absentia"], client=client)
     assert response is not None
     assert response.parent.name == "Animalia"
 
@@ -270,9 +293,9 @@ def test_returns_direct_children_of_deepest_taxon() -> None:
 
 
 def test_returns_panthera_species_as_children() -> None:
-    """A 5-segment path that lands at Panthera returns the species
+    """A 6-segment path that lands at Panthera returns the species
     that live under it. The cascade UI renders this in the leaf
-    panel."""
+    panel. The path includes the ``class`` tier (Mammalia)."""
     transport = _transport(
         {
             ("GET", _search_path("Animalia", rank="KINGDOM")): _search_200(
@@ -281,8 +304,11 @@ def test_returns_panthera_species_as_children() -> None:
             ("GET", _search_path("Chordata", parent_key=1, rank="PHYLUM")): _search_200(
                 [_row(44, "Chordata", "PHYLUM", parent_key=1)]
             ),
-            ("GET", _search_path("Carnivora", parent_key=44, rank="ORDER")): _search_200(
-                [_row(732, "Carnivora", "ORDER", parent_key=44)]
+            ("GET", _search_path("Mammalia", parent_key=44, rank="CLASS")): _search_200(
+                [_row(359, "Mammalia", "CLASS", parent_key=44)]
+            ),
+            ("GET", _search_path("Carnivora", parent_key=359, rank="ORDER")): _search_200(
+                [_row(732, "Carnivora", "ORDER", parent_key=359)]
             ),
             ("GET", _search_path("Felidae", parent_key=732, rank="FAMILY")): _search_200(
                 [_row(9702, "Felidae", "FAMILY", parent_key=732)]
@@ -301,7 +327,7 @@ def test_returns_panthera_species_as_children() -> None:
     )
     client = GbifClient(client=httpx.Client(transport=transport))
     response = list_path_children(
-        ["Animalia", "Chordata", "Carnivora", "Felidae", "Panthera"],
+        ["Animalia", "Chordata", "Mammalia", "Carnivora", "Felidae", "Panthera"],
         client=client,
     )
     assert response is not None
