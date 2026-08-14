@@ -48,9 +48,9 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from taxon.api.clb_path_children import list_path_children as clb_list_path_children
 from taxon.api.db import get_db
 from taxon.api.errors import AmbiguousError, NotFoundError
-from taxon.api.gbif_path_children import list_path_children as gbif_list_path_children
 from taxon.api.hierarchy import (
     PATH_RANKS,
     TaxonRow,
@@ -73,7 +73,7 @@ from taxon.api.species import (
     list_species_page,
     parse_include,
 )
-from taxon.gbif import GbifClient, GbifTaxon
+from taxon.checklistbank import ChecklistBankClient, ChecklistBankTaxon
 from taxon.schema import Taxon
 from taxon.search_links import SearchLink, build_search_links, load_templates
 
@@ -118,34 +118,40 @@ def path_children(
         Query(
             description=(
                 "Pipe-separated path of canonical names. The endpoint "
-                "walks the segments against the GBIF backbone and returns "
-                "the direct children of the deepest resolved taxon. "
-                "GBIF's 6-tier taxonomy (kingdom -> phylum -> order -> family "
-                "-> genus -> species) collapses the 40+ intermediate ranks "
-                "CoL exposes, so each cascade dropdown maps to exactly one "
-                "tier. Example: ?path=Animalia%7CChordata%7CGnathostomata"
+                "walks the segments against the ChecklistBank ``COL2024`` "
+                "dataset and returns the direct children of the deepest "
+                "resolved taxon. CLB's 9-tier taxonomy "
+                "(biota -> kingdom -> phylum -> subphylum -> class -> order "
+                "-> family -> genus -> species) adds a root tier above "
+                "kingdom and a subphylum tier between phylum and class. "
+                "The subphylum tier is collapsed when the parent phylum "
+                "has zero subphylum children (e.g. Arthropoda): the "
+                'resolver emits ``next_rank_hint="order"`` and returns '
+                "class children directly. Example: "
+                "?path=Animalia%7CChordata%7CVertebrata"
             ),
             min_length=1,
         ),
     ],
-    gbif: Annotated[GbifClient, Depends(_get_gbif_client)],
+    clb: Annotated[ChecklistBankClient, Depends(_get_checklistbank_client)],
 ) -> PathChildrenEnvelope:
     """Return the children of the deepest taxon the path resolves to.
 
-    The resolver walks the path against the GBIF backbone and returns
-    the direct children of the deepest resolved taxon. GBIF orders
-    results by acceptance + name match, so the first hit is the
-    accepted canonical taxon. The endpoint replaces the previous
-    CoL-backed resolver with a single source of truth that does
-    not require maintaining a local SQLite mirror.
+    The resolver walks the path against ChecklistBank ``COL2024`` and
+    returns the direct children of the deepest resolved taxon. CLB
+    search has no ``higherTaxonKey`` filter; the resolver relies on
+    the ``rank=R`` anchor at each step to keep same-named taxa from
+    colliding at different depths. The first hit whose canonical
+    name matches the segment case-insensitively is the resolver's
+    match.
     """
     segments = [segment for segment in path.split("|") if segment]
-    response = gbif_list_path_children(segments, client=gbif)
+    response = clb_list_path_children(segments, client=clb)
     if response is None:
         raise NotFoundError(f"taxon not found: {segments[-1]!r}")
     return PathChildrenEnvelope(
-        parent=TaxonResponse.model_validate(response.parent),
-        children=[TaxonResponse.model_validate(child) for child in response.children],
+        parent=_clb_taxon_to_taxon_response(response.parent),
+        children=[_clb_taxon_to_taxon_response(child) for child in response.children],
         next_rank_hint=response.next_rank_hint,
     )
 
@@ -160,17 +166,18 @@ def species_list(
         Query(
             description=(
                 "Pipe-separated path of canonical names. The endpoint "
-                "walks the segments against GBIF and returns the species "
-                "children of the deepest resolved taxon. The deepest "
-                "segment must be a genus; the resolver walks up the path "
-                "to find its GBIF key, then asks /species/{key}/children. "
-                "Example: ?path=Animalia%7CChordata%7CActinopterygii%7C"
-                "Cyprinodontiformes%7CGoodeidae%7CGirardinichthys"
+                "walks the segments against ChecklistBank ``COL2024`` and "
+                "returns the species children of the deepest resolved "
+                "taxon. The deepest segment must be a genus; the resolver "
+                "walks up the path to find its CLB id, then asks "
+                "``/tree/{id}/children?rank=species``. Example: "
+                "?path=Animalia%7CChordata%7CVertebrata%7CMammalia%7C"
+                "Carnivora%7CFelidae%7CPanthera"
             ),
             min_length=1,
         ),
     ],
-    gbif: Annotated[GbifClient, Depends(_get_gbif_client)],
+    clb: Annotated[ChecklistBankClient, Depends(_get_checklistbank_client)],
     cursor: Annotated[
         str | None,
         Query(description="Pagination cursor returned in next_cursor."),
@@ -178,27 +185,28 @@ def species_list(
 ) -> SpeciesListResponse:
     """Return the species list at the deepest taxon the path resolves to.
 
-    The path-aware resolver walks the segments and asks GBIF for the
+    The path-aware resolver walks the segments and asks CLB for the
     children of the deepest matched taxon. The cascade UI consumes
     this once the user picks a genus — the species list fills the
     leaf panel without further interaction.
     """
+    _ = cursor  # Pagination is not implemented for the CLB-backed path yet.
     segments = [segment for segment in path.split("|") if segment]
-    path_response = gbif_list_path_children(segments, client=gbif)
+    path_response = clb_list_path_children(segments, client=clb)
     if path_response is None:
         raise NotFoundError(f"taxon not found: {segments[-1]!r}")
-    children = gbif.get_children(
-        path_response.parent.id,
+    children = clb.get_children(
+        path_response.parent.taxon_id,
         limit=300,
-        rank="SPECIES",
+        rank="species",
     )
     items = [
         SpeciesListItem(
-            id=child.key,
+            id=child.taxon_id,
             name=child.canonical_name,
             display_name=child.scientific_name,
             rank=child.rank.lower(),
-            parent_id=child.parent_key,
+            parent_id=child.parent_id,
             parent_segments=segments,
         )
         for child in children
@@ -208,56 +216,50 @@ def species_list(
 
 @router.get("/kingdoms", response_model=list[TaxonResponse])
 def list_kingdoms(
-    gbif: Annotated[GbifClient, Depends(_get_gbif_client)],
+    clb: Annotated[ChecklistBankClient, Depends(_get_checklistbank_client)],
 ) -> list[TaxonResponse]:
-    """Return every Kingdom-rank taxon from GBIF.
+    """Return the two root-tier taxa from ChecklistBank ``COL2024``.
 
-    GBIF exposes 8 canonical kingdoms plus the virus realms, but
-    each one is duplicated across dozens of dataset-specific
-    keys. The endpoint deduplicates by ``nub_key`` (the canonical
-    backbone key) so the cascade dropdown shows one row per
-    kingdom, not one per dataset.
+    CLB exposes exactly two roots: ``Biota`` (id ``"5T6MX"``, parent
+    of every cellular kingdom) and ``Viruses`` (id ``"V"``, parent of
+    the virus realms). The endpoint queries ``/dataset/COL2024/tree``
+    and returns both rows so the cascade UI's first dropdown shows
+    one row per root.
     """
-    rows = gbif.search(name="", rank="KINGDOM", accepted_only=True, limit=100)
-    kingdoms = [row for row in rows if row.rank == "KINGDOM"]
-    # Deduplicate by nub_key so the UI shows one row per kingdom.
-    seen: set[int] = set()
-    deduped: list[GbifTaxon] = []
-    for kingdom in kingdoms:
-        if kingdom.nub_key in seen:
-            continue
-        seen.add(kingdom.nub_key)
-        deduped.append(kingdom)
-    # Sort by canonical name for a deterministic dropdown.
-    deduped.sort(key=lambda k: k.canonical_name.lower())
-    return [TaxonResponse.model_validate(_gbif_row_to_taxon_row(k)) for k in deduped]
+    rows = clb.list_roots()
+    rows.sort(key=lambda r: r.canonical_name.lower())
+    return [_clb_taxon_to_taxon_response(row) for row in rows]
 
 
-def _get_gbif_client() -> GbifClient:
-    """FastAPI dependency that yields the request-scoped GBIF client.
+def _get_checklistbank_client() -> ChecklistBankClient:
+    """FastAPI dependency that yields the request-scoped CLB client.
 
     The router takes a fresh client per request so tests can
     override the dependency and inject a transport-stubbed
-    client. Production callers get a default :class:`GbifClient`
-    that hits the public GBIF API directly.
+    client. Production callers get a default
+    :class:`ChecklistBankClient` that hits the public
+    ChecklistBank API directly.
     """
-    return GbifClient()
+    return ChecklistBankClient()
 
 
-def _gbif_row_to_taxon_row(gbif_row: GbifTaxon) -> TaxonRow:
-    """Bridge a :class:`GbifTaxon` to the legacy :class:`TaxonRow`.
+def _clb_taxon_to_taxon_response(taxon: ChecklistBankTaxon) -> TaxonResponse:
+    """Bridge a :class:`ChecklistBankTaxon` to the public
+    :class:`TaxonResponse`.
 
-    The cascade UI consumes :class:`TaxonRow`; the bridge
-    translates GBIF rows so the frontend does not need to
-    change when the data source changes.
+    CLB returns opaque string ids (``"N"``, ``"5T6MX"``, ...) whereas
+    the legacy local SQLite rows emit autoincrement ``int`` ids.
+    The widened response schema (``id: int | str``) carries both
+    shapes so the cascade UI does not need to branch on backend.
     """
-    return TaxonRow(
-        id=gbif_row.key,
-        name=gbif_row.canonical_name,
-        rank=gbif_row.rank.lower(),
-        parent_id=gbif_row.parent_key,
-        display_name=gbif_row.scientific_name,
-        is_synonym=False,
+    rank = taxon.rank.lower() if taxon.rank else ""
+    return TaxonResponse(
+        id=taxon.taxon_id,
+        name=taxon.canonical_name,
+        display_name=taxon.scientific_name or taxon.canonical_name,
+        rank=rank,
+        parent_id=taxon.parent_id,
+        is_synonym=(taxon.status is not None and taxon.status.lower() != "accepted"),
         is_extinct=False,
         is_uncertain=False,
         is_unassigned=False,
