@@ -1,10 +1,14 @@
 /** Cascade — the path-aware breadcrumb component.
 
-The Cascade renders one dropdown per rank layer the backend has
-served for the current path. The level count is dynamic — CoL
-ships 40+ ranks with intermediate ranks (subphylum, gigaclass,
-infraphylum, parvphylum, ...) that the previous six-fixed-rank
-cascade skipped.
+The Cascade renders one dropdown per display_level bucket the
+backend has served for the current path. The cascade collapses
+CoL's 40+ ranks into 8 visible buckets (realm, kingdom, phylum,
+class, order, family, genus, species) so the dropdowns stay
+navigable. Taxa whose rank has no display_level bucket
+(unranked, historical ranks like ``proles`` / ``natio`` / ``lusus``,
+and the year-numeric noise the .txtree parser accidentally
+emits) are filtered out by the resolver so the cascade never
+shows them.
 
 State (see ``Cascade.state.ts``):
 
@@ -23,6 +27,13 @@ Key invariants:
 - Picking a segment updates the path; the next /path-children
   call fires with the cumulative path; the new dropdown renders
   with the response's children + next_rank_hint.
+- The ``next_rank_hint`` from the backend is the modal
+  display_level bucket among the children, NOT the raw rank.
+  This keeps the dropdown label stable across the 40+
+  intermediate ranks CoL publishes — labelling is "Phylum",
+  "Class", "Order", "Family", "Genus", "Species" regardless of
+  whether the underlying rank is "subphylum" / "infraclass" /
+  "superorder" / etc.
 - When ``next_rank_hint`` is null (the deepest taxon has no
   children), the species list takes over via /api/.../species.
 - Changing a parent segment clears every child snapshot so no
@@ -230,9 +241,16 @@ export function Cascade(): JSX.Element {
       deepestSnapshot.nextRankHint !== null &&
       deepestSnapshot.nextRankHint !== undefined
     ) {
+      // The backend returns the display_level bucket name
+      // (realm, kingdom, phylum, class, order, family, genus,
+      // species) rather than the raw rank so the dropdown label
+      // stays stable across the 40+ intermediate ranks CoL
+      // publishes. Capitalize the first letter so the dropdown
+      // header reads as a regular noun.
       dropdowns.push({
         key: `${deepestKey}-next`,
-        label: deepestSnapshot.nextRankHint.trim(),
+        label: deepestSnapshot.nextRankHint.charAt(0).toUpperCase() +
+          deepestSnapshot.nextRankHint.slice(1),
         options: deepestSnapshot.children,
         value: null,
         loading: false,

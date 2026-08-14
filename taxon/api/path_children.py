@@ -16,6 +16,13 @@ return the deepest resolved taxon. The router in
 :mod:`taxon.api.router` exposes them as a single new endpoint
 ``GET /api/path-children?path=A|B|C``.
 
+The cascade UI consumes the children of the deepest resolved
+taxon and renders one dropdown per display_level bucket
+(realm → kingdom → phylum → class → order → family → genus →
+species). Children whose ``display_level`` is ``None`` are
+filtered out so the cascade never shows unranked rows or the
+historical rank noise that CoL publishes in its archive.
+
 The 6-rank helpers in :mod:`taxon.api.hierarchy` remain
 available for callers that still need them. Their deprecation
 and removal is a follow-up PR; this commit is additive.
@@ -31,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from taxon.api.hierarchy import TaxonRow, _to_row
 from taxon.schema import Taxon
+from taxon.taxonomy import RANK_TO_DISPLAY_LEVEL
 
 
 @dataclass(frozen=True)
@@ -38,10 +46,11 @@ class PathChildrenResponse:
     """Result of ``GET /api/path-children``.
 
     The ``parent`` row is the deepest taxon the path resolved to.
-    The ``children`` are its direct children regardless of rank
-    name. The ``next_rank_hint`` is the rank that appears most
-    often among the children so the frontend can label the next
-    dropdown; ``None`` when there are no children (leaf node).
+    The ``children`` are its direct children, filtered to the
+    cascade buckets (rank values whose ``display_level`` is not
+    ``None``). The ``next_rank_hint`` is the bucket that appears
+    most often among the children so the frontend can label the
+    next dropdown; ``None`` when there are no children (leaf node).
     """
 
     parent: TaxonRow
@@ -69,11 +78,17 @@ def list_path_children(
     Actinopterygii`` without the resolver refusing the
     subphylum step.
 
-    ``next_rank_hint`` is the mode of ``children[].rank`` so a
-    heterogeneous set (a few subphyla + a handful of
-    unranked microspecies) gets the rank that the frontend
-    should show as the dropdown label. When children are empty,
-    the hint is ``None``.
+    Children are filtered to ranks whose ``display_level`` is
+    not ``None`` so the cascade UI does not show unranked rows
+    (1.5M of them in the CoL archive) or the historical rank
+    noise that would otherwise freeze the dropdowns. ``None``
+    is the canonical "exclude from cascade" signal.
+
+    ``next_rank_hint`` is the mode of ``children[].display_level``
+    (after filtering) so a heterogeneous set (a few subphyla +
+    a handful of genus children for unranked microspecies) gets
+    the bucket the frontend should show as the dropdown label.
+    When children are empty, the hint is ``None``.
     """
     if not segments:
         return None
@@ -97,17 +112,25 @@ def list_path_children(
     # segment resolved above.
     assert current is not None
 
+    # Cascade UI: only show children whose rank has a display_level
+    # bucket. Unranked rows and historical ranks (proles, natio,
+    # aberration, ...) are excluded. The positive list is the
+    # whitelist in :mod:`taxon.taxonomy`.
+    cascade_ranks = list(RANK_TO_DISPLAY_LEVEL.keys())
     children_stmt = (
         select(Taxon)
-        .where(Taxon.parent_id == current.id)
+        .where(
+            Taxon.parent_id == current.id,
+            func.lower(Taxon.rank).in_([r.lower() for r in cascade_ranks]),
+        )
         .order_by(func.lower(Taxon.name), Taxon.name)
     )
     child_rows = [_to_row(t) for t in session.scalars(children_stmt).all()]
 
     next_rank_hint: str | None = None
     if child_rows:
-        rank_counts = Counter(child.rank for child in child_rows)
-        next_rank_hint = rank_counts.most_common(1)[0][0]
+        bucket_counts = Counter(RANK_TO_DISPLAY_LEVEL[child.rank.lower()] for child in child_rows)
+        next_rank_hint = bucket_counts.most_common(1)[0][0]
 
     return PathChildrenResponse(
         parent=current,

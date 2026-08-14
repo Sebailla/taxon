@@ -128,23 +128,27 @@ describe("Path-aware cascade chains through intermediate ranks", () => {
           "/api/kingdoms",
           mockFetchJson([taxon(2, "Animalia", "kingdom")]),
         ],
-        // /path-children?path=Animalia → phyla
+        // /path-children?path=Animalia → phyla. The next_rank_hint
+        // is the modal display_level bucket ("phylum") — the
+        // frontend renders the dropdown label as "Phylum".
         mockFetchJson({
           parent: taxon(2, "Animalia", "kingdom"),
           children: [taxon(3, "Chordata", "phylum")],
           next_rank_hint: "phylum",
         }),
-        // /path-children?path=Animalia|Chordata → subphyla (CoL pattern)
+        // /path-children?path=Animalia|Chordata → subphyla (CoL pattern).
+        // Both subphylum and infraphylum bucket into "phylum",
+        // so the user keeps seeing "Phylum" at every step.
         mockFetchJson({
           parent: taxon(3, "Chordata", "phylum"),
           children: [taxon(4, "Vertebrata", " subphylum")],
-          next_rank_hint: " subphylum",
+          next_rank_hint: "phylum",
         }),
         // /path-children?path=Animalia|Chordata|Vertebrata → infraphyla
         mockFetchJson({
           parent: taxon(4, "Vertebrata", " subphylum"),
           children: [taxon(5, "Gnathostomata", "infraphylum")],
-          next_rank_hint: "infraphylum",
+          next_rank_hint: "phylum",
         }),
       ]);
 
@@ -158,22 +162,25 @@ describe("Path-aware cascade chains through intermediate ranks", () => {
       );
       await screen.findByRole("option", { name: "Chordata" });
 
-      // Step 2: pick Chordata → cascade loads Vertebrata at rank "subphylum".
-      // The next dropdown is labelled with the next_rank_hint ("subphylum").
+      // Step 2: pick Chordata → cascade loads Vertebrata. The next
+      // dropdown is labelled with the next_rank_hint, which now
+      // resolves to the "Phylum" bucket (subphylum collapses
+      // into phylum at the display layer).
       await user.selectOptions(
-        screen.getByRole("combobox", { name: "phylum" }),
+        screen.getByRole("combobox", { name: "Phylum" }),
         "Chordata",
       );
       await screen.findByRole("option", { name: "Vertebrata" });
 
-      // The intermediate subphylum dropdown must render.
+      // The next Phylum dropdown must render (subphylum
+      // Vertebrata is selectable from it).
       const subphylumDropdown = await screen.findByRole("combobox", {
-        name: "subphylum",
+        name: "Phylum",
       });
       expect(subphylumDropdown).toBeInTheDocument();
 
-      // Step 3: pick Vertebrata → cascade loads Gnathostomata at rank
-      // "infraphylum".
+      // Step 3: pick Vertebrata → cascade loads Gnathostomata at
+      // rank "infraphylum" (still in the Phylum bucket).
       await user.selectOptions(subphylumDropdown, "Vertebrata");
       await screen.findByRole("option", { name: "Gnathostomata" });
     },
@@ -228,11 +235,11 @@ describe("Path-aware cascade reaches species after a genus is picked", () => {
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "phylum" }),
+      await screen.findByRole("combobox", { name: "Phylum" }),
       "Chordata",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "genus" }),
+      await screen.findByRole("combobox", { name: "Genus" }),
       "Gadus",
     );
 

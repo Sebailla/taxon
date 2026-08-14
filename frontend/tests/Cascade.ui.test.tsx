@@ -200,17 +200,17 @@ describe("Cascade UI: inclusion toggles", () => {
     );
     await screen.findByRole("option", { name: "Chordata" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "phylum" }),
+      screen.getByRole("combobox", { name: "Phylum" }),
       "Chordata",
     );
     await screen.findByRole("option", { name: "Vertebrata" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "subphylum" }),
+      screen.getByRole("combobox", { name: "Subphylum" }),
       "Vertebrata",
     );
     await screen.findByRole("option", { name: "Gadus" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "genus" }),
+      screen.getByRole("combobox", { name: "Genus" }),
       "Gadus",
     );
 

@@ -22,6 +22,7 @@ class Taxon(MarkerColumns, Base):
     __table_args__ = (
         Index("ix_taxa_parent_name", "parent_id", "name"),
         Index("ix_taxa_rank", "rank"),
+        Index("ix_taxa_display_level", "display_level"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -30,6 +31,10 @@ class Taxon(MarkerColumns, Base):
     rank: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
+    #: Cascade bucket for the UI. ``None`` when the rank is excluded
+    #: from the cascade (unranked, historical ranks, year-numeric noise).
+    #: See :mod:`taxon.taxonomy` for the mapping.
+    display_level: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class SpeciesPath(MarkerColumns, Base):
