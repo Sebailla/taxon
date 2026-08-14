@@ -49,13 +49,19 @@ class TaxonResponse(_ORMBase):
     ``name`` is the citation-free canonical key used for path-name lookups;
     ``display_name`` preserves the verbatim source label including any author
     citation so the UI can render it.
+
+    ``id`` and ``parent_id`` accept ``int | str`` because the cascade
+    backend's two backends disagree: local SQLite rows emit autoincrement
+    ``int`` ids, while the ChecklistBank-backed cascade emits opaque
+    string IDs (e.g. ``"N"`` for Animalia, ``"5T6MX"`` for Biota). The
+    union type keeps both contract surfaces honest.
     """
 
-    id: int
+    id: int | str
     name: Annotated[str, Field(min_length=1)]
     display_name: str
     rank: str
-    parent_id: int | None = None
+    parent_id: int | str | None = None
 
     is_synonym: bool = False
     is_extinct: bool = False
@@ -150,13 +156,17 @@ class SpeciesListItem(_ORMBase):
     Same shape as :class:`TaxonResponse` for the per-row payload; we
     keep a separate name so future fields (e.g. taxonomy-version
     markers) can be added without breaking ``TaxonResponse``.
+
+    ``id`` and ``parent_id`` accept ``int | str`` to mirror
+    :class:`TaxonResponse` — local rows emit ``int``, ChecklistBank
+    rows emit opaque strings.
     """
 
-    id: int
+    id: int | str
     name: Annotated[str, Field(min_length=1)]
     display_name: str
     rank: str
-    parent_id: int | None = None
+    parent_id: int | str | None = None
     parent_segments: list[str] = Field(default_factory=list)
 
     is_synonym: bool = False

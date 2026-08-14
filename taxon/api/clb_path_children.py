@@ -1,25 +1,23 @@
 """Path-aware cascade resolver backed by ChecklistBank.
 
 The cascade UI consumes ``GET /api/path-children?path=A|B|C`` and
-expects the same envelope shape it used against the previous
-GBIF-backed resolver (``PathChildrenResponse`` with ``parent``,
-``children``, ``next_rank_hint``). The only difference: the parent
-and children come from ChecklistBank, not GBIF.
+expects the same envelope shape (``PathChildrenResponse`` with
+``parent``, ``children``, ``next_rank_hint``). The parent and
+children come from ChecklistBank.
 
-CLB's tier tuple is nine elements — one more than GBIF's seven —
-because the cascade exposes the ``biota`` root tier above Kingdom
-and the ``subphylum`` tier between Phylum and Class. The locked
-9-tuple is declared in :data:`CASCADE_TIERS`; every rank depth
-calculation reads from it so the resolver never drifts when a
-new tier is added.
+CLB's tier tuple is nine elements because the cascade exposes the
+``biota`` root tier above Kingdom and the ``subphylum`` tier
+between Phylum and Class. The locked 9-tuple is declared in
+:data:`CASCADE_TIERS`; every rank depth calculation reads from it
+so the resolver never drifts when a new tier is added.
 
 The walk algorithm is a single forward pass over the segments:
 
 1. For each segment, search CLB
    ``/nameusage/search?q=<segment>&rank=R``. CLB's search has no
-   ``higherTaxonKey`` filter (unlike GBIF) so the resolver relies
-   on the ``rank`` anchor to disambiguate same-named taxa at
-   different depths. The first hit whose
+   ``higherTaxonKey`` filter so the resolver relies on the ``rank``
+   anchor to disambiguate same-named taxa at different depths. The
+   first hit whose
    :attr:`ChecklistBankTaxon.canonical_name` matches the segment
    case-insensitively is the resolver's match.
 2. After resolving the deepest segment, fetch the next tier's
@@ -41,9 +39,8 @@ entirely. This is one-shot: a phylum with no subphylum AND no
 class children returns ``children=[]`` with ``next_rank_hint=None``
 so the cascade UI renders an empty leaf dropdown. No recursion.
 
-The shape returned to the (future) API route is the same
-:class:`PathChildrenResponse` dataclass the previous resolver
-exposed. PR #3's router swap translates the
+The shape returned to the API route is the same
+:class:`PathChildrenResponse` dataclass. The router translates the
 :class:`ChecklistBankTaxon` parents + children into the public
 ``TaxonResponse`` envelope.
 """
@@ -81,12 +78,10 @@ TIER_DEPTH: dict[str, int] = {tier: idx for idx, tier in enumerate(CASCADE_TIERS
 class PathChildrenResponse:
     """Result of ``GET /api/path-children``.
 
-    Mirrors the previous GBIF-backed resolver so the cascade UI
-    does not need to change. The :class:`ChecklistBankTaxon`
-    instances carry the same fields the previous resolver exposed
-    (name, rank, parent_id, dataset_key, taxon_id, count,
+    The :class:`ChecklistBankTaxon` instances carry the cascade
+    fields (name, rank, parent_id, dataset_key, taxon_id, count,
     child_count) for the router to translate into the public
-    ``TaxonResponse`` envelope in PR #3.
+    ``TaxonResponse`` envelope.
     """
 
     parent: ChecklistBankTaxon
@@ -116,9 +111,9 @@ def list_path_children(
     clb = client or ChecklistBankClient()
 
     # Resolve the deepest segment. CLB search has no
-    # ``higherTaxonKey`` filter (unlike GBIF); the walk relies on
-    # the ``rank`` anchor at each depth to disambiguate same-named
-    # taxa at different levels.
+    # ``higherTaxonKey`` filter; the walk relies on the ``rank``
+    # anchor at each depth to disambiguate same-named taxa at
+    # different levels.
     deepest = _resolve_deepest(segments, clb)
     if deepest is None:
         return None
