@@ -1,14 +1,21 @@
 /** Cascade — the path-aware cascade against the ChecklistBank backend.
 
-The Cascade renders one dropdown per tier the CLB resolver has
-served for the current path. CLB exposes a 9-tier tuple
-(biota → kingdom → phylum → subphylum → class → order → family
-→ genus → species); the subphylum tier collapses to ``class``
-when the parent phylum has zero subphylum children (PR #2b in
-the ``cascade-checklistbank`` chain), so the cascade sometimes
-skips a slot. Two top-tier dropdowns (Biota + Viruses) come
-from the root ``/api/kingdoms`` endpoint and feed the first
-``/path-children`` call.
+The Cascade renders one dropdown per tier group the CLB resolver
+served for the current path. CLB publishes children at off-tuple
+intermediate ranks (``infraphylum``, ``parvphylum``,
+``megaclass``, ``subclass``, ``suborder``) so the legacy locked
+9-tier tuple projection dead-ended at any off-tuple tier
+(Issue #43). The new resolver fetches children with no rank
+filter, groups them by their actual CLB rank, and emits
+``next_tiers`` (one ``NextTier`` per rank group) in the wire
+envelope. The cascade renders one dropdown per entry in
+``next_tiers``; the dropdown label comes from the tier's own
+``label`` field (capitalised from the CLB rank — "Infraphylum",
+"Parvphylum", "Megaclass", "Subclass", "Suborder"). The
+subphylum collapse rule (PR #2b) is preserved at the phylum
+tier: when the phylum has only class-rank children, the resolver
+emits a single ``class`` tier so the UI does not show an empty
+subphylum picker.
 
 State (see ``Cascade.state.ts``):
 
@@ -26,15 +33,11 @@ Key invariants:
 
 - Picking a segment updates the path; the next /path-children
   call fires with the cumulative path; the new dropdown renders
-  with the response's children + next_rank_hint.
-- ``next_rank_hint`` is one of the cascade tier labels
-  (``biota``, ``kingdom``, ``phylum``, ``subphylum``, ``class``,
-  ``order``, ``family``, ``genus``, ``species``) or ``null``
-  when the deepest taxon has no children. The cascade
-  capitalises the hint into the dropdown header so the label
-  is stable for every tier.
-- When ``next_rank_hint`` is null (the deepest taxon has no
-  children), the species list takes over via /api/species-list.
+  with the response's ``next_tiers``.
+- ``next_tiers`` is ``null`` (the deepest taxon has no
+  children at any rank), an empty array (defensive — backend
+  shouldn't emit this), or a list of ``NextTier`` records. The
+  species list takes over when ``next_tiers`` is ``null``.
 - Changing a parent segment clears every child snapshot so no
   stale state leaks across picks.
 - In-flight requests are aborted when a new selection supersedes
@@ -58,6 +61,7 @@ import {
   pathKey,
 } from "./Cascade.state";
 import {
+  type NextTier,
   type TaxonResponse,
   buildBreadcrumb,
   fetchRoots,
@@ -76,10 +80,10 @@ export function Cascade(): JSX.Element {
   //
   // 1. **Path = []** — fetch the cascade roots via
   //    ``/api/kingdoms`` (CLB returns Biota + Viruses). The
-  //    snapshot's ``nextRankHint`` is ``"kingdom"`` so the
-  //    renderer can render the second root dropdown labelled
-  //    "Kingdom" once the user picks Biota.
-  // 2. **Path = [biota-name]** — fetch the children of the
+  //    ``next_tiers`` for the root snapshot is a single "kingdom"
+  //    tier so the renderer can render the second dropdown
+  //    labelled "Kingdom" once the user picks Biota.
+  // 2. **Path = [biota-name]`` — fetch the children of the
   //    picked root via ``/api/path-children?path=<biota-name>``;
   //    the response carries the kingdoms (or the virus realms,
   //    if Viruses was picked).
@@ -89,12 +93,15 @@ export function Cascade(): JSX.Element {
   useEffect(() => {
     const ctrl = new AbortController();
     const key = pathKey(state.path);
-    const onSuccess = (children: TaxonResponse[], nextRankHint: string | null) => {
+    const onSuccess = (
+      children: TaxonResponse[],
+      nextTiers: NextTier[] | null,
+    ) => {
       if (ctrl.signal.aborted) return;
       dispatch({
         type: "set-current-level",
         pathKey: key,
-        snapshot: { children, nextRankHint },
+        snapshot: { children, nextTiers },
       });
     };
     const onError = () => {
@@ -109,10 +116,18 @@ export function Cascade(): JSX.Element {
         if (result.status === "ok") {
           // CLB returns the two top-tier taxa (Biota, Viruses).
           // The next dropdown picks a kingdom from the Biota
-          // tree, so we hardcode ``nextRankHint = "kingdom"``
-          // here; the backend's ``/api/path-children`` calls
-          // will report their own hints for everything below.
-          onSuccess(result.data, "kingdom");
+          // tree, so we wrap the roots in a single "kingdom"
+          // tier here; the backend's ``/api/path-children``
+          // calls will report their own tiers for everything
+          // below.
+          onSuccess(result.data, [
+            {
+              rank: "kingdom",
+              label: "Kingdom",
+              examples: result.data.map((row) => row.name).slice(0, 3),
+              children: result.data,
+            },
+          ]);
         } else {
           onError();
         }
@@ -122,7 +137,7 @@ export function Cascade(): JSX.Element {
     void fetchPathChildren(densePath(state.path), { signal: ctrl.signal }).then(
       (result) => {
         if (result.status === "ok") {
-          onSuccess(result.data.children, result.data.next_rank_hint);
+          onSuccess(result.data.children, result.data.next_tiers);
         } else {
           onError();
         }
@@ -131,28 +146,29 @@ export function Cascade(): JSX.Element {
     return () => ctrl.abort();
   }, [state.path]);
 
-  // When the deepest snapshot has next_rank_hint === null the
-  // cascade has reached a genus row — the children it returned
-  // are species. Fetch the species list directly via the
-  // path-aware /api/species-list endpoint so the SpeciesList below
-  // can render the rows with the inclusion-filter support the
-  // legacy build landed.
+  // When the deepest snapshot has ``next_tiers === null`` the
+  // cascade has reached a leaf — the deepest taxon has no
+  // children at any rank. Fetch the species list directly via
+  // the path-aware /api/species-list endpoint so the SpeciesList
+  // below can render the rows with the inclusion-filter support
+  // the legacy build landed.
   useEffect(() => {
     if (state.path.length === 0) return;
     const key = pathKey(state.path);
     const snapshot = state.levelByPath[key];
     if (snapshot === undefined) return;
-  // Only fetch the species list when the deepest snapshot is
-  // a confirmed leaf (``next_rank_hint === null``). When the
-  // hint is a string we are not at a leaf yet; when it is
-  // ``undefined`` the snapshot is the loading placeholder and
-  // the fetch is still in flight. Both cases early-return after
-  // resetting the species status so the SpeciesList does not
-  // stay stuck in the "Loading children…" placeholder.
-  if (snapshot.nextRankHint !== null) {
-    dispatch({ type: "set-species-status", status: "idle" });
-    return;
-  }
+    // Only fetch the species list when the deepest snapshot is
+    // a confirmed leaf (``next_tiers === null``). When the
+    // tiers are an array we are not at a leaf yet; when
+    // tiers is undefined the snapshot is the loading
+    // placeholder and the fetch is still in flight. Both
+    // cases early-return after resetting the species status
+    // so the SpeciesList does not stay stuck in the "Loading
+    // children…" placeholder.
+    if (snapshot.nextTiers !== null) {
+      dispatch({ type: "set-species-status", status: "idle" });
+      return;
+    }
     // CoL classifies some phyla as leaves whose children are
     // genera. The cascade only auto-loads the species list when
     // the deepest snapshot is a confirmed genus (its children are
@@ -195,20 +211,26 @@ export function Cascade(): JSX.Element {
   // chain) is the first slot. Picking Biota or Viruses fills
   // the second slot with kingdom-rank children (Animalia, etc.)
   // and labels it "Kingdom" — the CLB resolver reports
-  // ``next_rank_hint = "kingdom"`` for the root tier.
+  // ``next_tiers = [{rank: "kingdom", label: "Kingdom", ...}]``
+  // for the root tier.
   //
-  // A "next" trailing slot appears after the deepest picked
-  // segment whenever the deepest snapshot reports a non-null
-  // ``next_rank_hint``. The trailing slot is the picker the user
-  // uses to extend the path by one segment; its options are the
-  // children of the deepest resolved taxon.
-  const dropdowns: Array<{
+  // Off-tuple intermediate ranks (Issue #43): the resolver
+  // emits one ``NextTier`` per rank group, so the cascade can
+  // append a dropdown for every group. When the user picks
+  // Chordata and the next snapshot reports
+  // ``next_tiers = [{rank: "subphylum", label: "Subphylum", ...}]``,
+  // the cascade renders one "Subphylum" picker; when it
+  // reports infraphylum + class, the cascade renders two
+  // pickers ("Infraphylum", "Class"). Each picker extends the
+  // path by one segment.
+  type DropdownDescriptor = {
     key: string;
     label: string;
     options: TaxonResponse[];
     value: string | null;
     loading: boolean;
-  }> = [];
+  };
+  const dropdowns: DropdownDescriptor[] = [];
 
   // Always render at least the root "Biota" slot so the user
   // can pick (or re-pick) the top tier.
@@ -219,7 +241,7 @@ export function Cascade(): JSX.Element {
     const parentPrefix = state.path.slice(0, i);
     const parentKey = pathKey(parentPrefix);
     const parentSnapshot = state.levelByPath[parentKey];
-    const parentRankHint = parentSnapshot?.nextRankHint ?? null;
+    const parentTiers = parentSnapshot?.nextTiers ?? null;
     const isDeepest = i === state.path.length;
     const value = state.path[i] ?? null;
     // ``loading`` is true when this slot's options are still
@@ -230,12 +252,16 @@ export function Cascade(): JSX.Element {
     const loading = parentSnapshot === undefined && isDeepest;
     // The dropdown label is the tier the picker will land on.
     // - i === 0: "Biota" (the cascade root tier).
-    // - i > 0: capitalise the parent's next_rank_hint so
-    //   "kingdom" → "Kingdom", "phylum" → "Phylum", etc.
+    // - i > 0: the first tier from the parent's ``next_tiers``
+    //   so "kingdom" → "Kingdom", "phylum" → "Phylum", etc.
+    //   When the parent has multiple tier groups (off-tuple
+    //   intermediates), only the FIRST group's label surfaces
+    //   here — the cascade renders additional pickers below
+    //   this one for the remaining groups.
     const label = i === 0
       ? "Biota"
-      : parentRankHint
-        ? capitalize(parentRankHint)
+      : parentTiers && parentTiers.length > 0
+        ? parentTiers[0]?.label ?? "—"
         : inferDropdownLabel(parentSnapshot);
     dropdowns.push({
       key: i === 0 ? "biota" : parentKey,
@@ -244,6 +270,38 @@ export function Cascade(): JSX.Element {
       value: isDeepest ? null : value,
       loading,
     });
+  }
+
+  // Append one dropdown per remaining tier group when the
+  // deepest snapshot reports ``next_tiers`` with multiple
+  // entries. The path has already advanced past the deepest
+  // picked segment, so these dropdowns all sit at
+  // ``state.path.length`` and extend the path by one segment
+  // each. The label of each dropdown comes from the tier's
+  // own ``label`` field (e.g. "Infraphylum", "Subclass").
+  const deepestKey = pathKey(state.path);
+  const deepestSnapshot = state.levelByPath[deepestKey];
+  if (
+    deepestSnapshot !== undefined &&
+    Array.isArray(deepestSnapshot.nextTiers) &&
+    deepestSnapshot.nextTiers.length > 1
+  ) {
+    const tiers: NextTier[] = deepestSnapshot.nextTiers;
+    // Skip the first tier — the dropdown for ``path[i]`` is
+    // already rendered by the loop above (it shows the first
+    // group's options). The remaining tiers need their own
+    // dropdowns so the user can pick each one.
+    for (let i = 1; i < tiers.length; i += 1) {
+      const tier = tiers[i];
+      if (tier === undefined) continue;
+      dropdowns.push({
+        key: `${deepestKey}::tier::${i}`,
+        label: tier.label,
+        options: tier.children,
+        value: null,
+        loading: false,
+      });
+    }
   }
 
   return (
@@ -289,35 +347,26 @@ interface RankDropdownProps {
 }
 
 /**
- * Capitalise the first letter of ``s`` so a CLB next-rank hint
- * like ``"kingdom"`` renders as the dropdown header ``"Kingdom"``.
- *
- * The cascade uses this helper to keep dropdown labels stable
- * across the 9-tier tuple: every tier (biota, kingdom, phylum,
- * subphylum, class, order, family, genus, species) shows up as
- * a regular noun without the resolver having to maintain a
- * tier-to-label table.
- */
-function capitalize(s: string | null | undefined): string {
-  if (s === null || s === undefined || s.length === 0) return "";
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-/**
  * Best-effort label for a dropdown when the snapshot is loading
- * or when ``next_rank_hint`` is null.
+ * or when ``next_tiers`` is null.
  *
  * - ``undefined`` snapshot → "Loading…" (fetch still in flight).
- * - snapshot with ``next_rank_hint === null`` (leaf) → fall back
+ * - snapshot with ``next_tiers === null`` (leaf) → fall back
  *   to the rank of the first child so the label is informative
  *   ("genus") instead of "Segment 3".
  */
 function inferDropdownLabel(
-  snapshot: { children: TaxonResponse[]; nextRankHint: string | null | undefined } | undefined,
+  snapshot:
+    | { children: TaxonResponse[]; nextTiers: NextTier[] | null | undefined }
+    | undefined,
 ): string {
   if (snapshot === undefined) return "Loading…";
-  if (snapshot.nextRankHint !== null && snapshot.nextRankHint !== undefined) {
-    return snapshot.nextRankHint.trim();
+  if (
+    snapshot.nextTiers !== null &&
+    snapshot.nextTiers !== undefined &&
+    snapshot.nextTiers.length > 0
+  ) {
+    return snapshot.nextTiers[0]?.label ?? "—";
   }
   if (snapshot.children.length === 0) return "—";
   return snapshot.children[0]?.rank ?? "—";

@@ -8,10 +8,13 @@ plus the ChecklistBank-aware endpoints shipped in the
   CLB returns the two top-tier taxa (``Biota``, ``Viruses``); the
   UI renders a ``Biota`` dropdown that drives the kingdom choice.
 - ``GET /api/path-children?path=A|B|...``                 — children of the
-  deepest taxon the path resolves to, plus the next-rank hint. The
-  CLB resolver walks a 9-tier tuple (biota → kingdom → phylum →
-  subphylum → class → order → family → genus → species); subphylum
-  collapses when the parent phylum has zero subphylum children.
+  deepest taxon the path resolves to. The CLB resolver walks a
+  best-effort path and groups children by their actual rank
+  label; the wire envelope exposes ``next_tiers`` (list of
+  ``{rank, label, examples, children}``) so the cascade UI
+  renders one dropdown per rank group. Off-tuple intermediate
+  ranks (``infraphylum``, ``parvphylum``, ``megaclass``,
+  ``subclass``, ``suborder``) become their own tier groups.
 - ``GET /api/species-list?path=...``                     — paginated species
   under the deepest genus in the path.
 - ``GET /api/{kingdom}/phyla``                          — list phyla (legacy).
@@ -84,10 +87,17 @@ export interface LinksResponse {
   links: SearchLinkItem[];
 }
 
+export interface NextTier {
+  rank: string;
+  label: string;
+  examples: string[];
+  children: TaxonResponse[];
+}
+
 export interface PathChildrenResponse {
   parent: TaxonResponse;
   children: TaxonResponse[];
-  next_rank_hint: string | null;
+  next_tiers: NextTier[] | null;
 }
 
 export interface AmbiguityCandidate {
@@ -201,14 +211,16 @@ export async function fetchChildren(
 /**
  * Path-aware cascade helper. Walks the caller-supplied path of
  * canonical names and returns the direct children of the deepest
- * resolved taxon, regardless of rank name. ``next_rank_hint`` is
- * the rank that occurs most often among the children (the mode),
- * or ``null`` when the children are empty (the cascade has reached
- * a leaf).
+ * resolved taxon, regardless of rank name. ``next_tiers`` carries
+ * one ``NextTier`` per distinct rank group below the parent; the
+ * cascade UI renders one dropdown per group with the dropdown's
+ * label taken from ``tier.label``. ``next_tiers`` is ``null`` when
+ * the deepest taxon has no children (the cascade has reached a
+ * leaf).
  *
  * This is the building block for the dynamic cascade: each call
  * returns the children for the next dropdown. The frontend renders
- * a new dropdown per non-empty response until ``next_rank_hint``
+ * a new dropdown per tier group in ``next_tiers`` until the array
  * is null, at which point it loads the species list for the
  * deepest taxon via :func:`fetchSpeciesList`.
  */
@@ -249,7 +261,7 @@ export async function fetchSpecies(
  * Walks the caller-supplied path (same contract as
  * :func:`fetchPathChildren`) and returns the species-rank children
  * of the deepest resolved taxon, paginated. Used by the cascade
- * when the deepest snapshot has ``next_rank_hint = null`` —
+ * when the deepest snapshot has ``next_tiers = null`` —
  * i.e. the cascade has reached a genus row and the frontend
  * needs the species under it.
  *

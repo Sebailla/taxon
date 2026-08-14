@@ -245,23 +245,53 @@ class LinksResponse(_ORMBase):
     links: list[SearchLinkItem]
 
 
+class NextTier(_ORMBase):
+    """One available tier below the parent in
+    ``GET /api/path-children?path=A|B|C``.
+
+    CLB / CoL publishes children at multiple ranks between any
+    two tuple tiers (``infraphylum`` and ``parvphylum`` between
+    subphylum and class; ``subclass`` between class and order;
+    ``suborder`` between order and family). The best-effort
+    resolver groups children by their actual CLB rank label
+    and emits one ``NextTier`` per rank group.
+
+    The frontend renders one cascade dropdown per group, with
+    the dropdown's label taken from :attr:`label`.
+    """
+
+    rank: str
+    """CLB rank label, verbatim (``"infraphylum"``, ``"suborder"``, ...)."""
+
+    label: str
+    """User-facing dropdown label, capitalised from :attr:`rank`."""
+
+    examples: list[str] = []
+    """First few children names; convenience for tests + tooltips."""
+
+    children: list[TaxonResponse] = []
+    """Children at this rank; the frontend extends the path by
+    one segment per tier group."""
+
+
 class PathChildrenEnvelope(_ORMBase):
     """Envelope for ``GET /api/path-children?path=A|B|C``.
 
-    The new path-aware resolver returns ``parent`` (the deepest
-    taxon the path resolved to), ``children`` (its direct
-    children regardless of rank name), and ``next_rank_hint``
-    (the rank that appears most often among the children, so the
-    frontend can label the next dropdown).
+    The best-effort resolver (Issue #43) returns ``parent`` (the
+    deepest taxon the path resolved to), ``children`` (every
+    direct child flattened and de-duplicated by taxon id), and
+    ``next_tiers`` (one :class:`NextTier` per distinct rank
+    group below the parent; ``None`` at the leaf).
 
-    The children list may be empty when the deepest taxon is a
-    leaf (species row). In that case ``next_rank_hint`` is null
-    so the frontend can stop emitting dropdowns.
+    The cascade UI renders one dropdown per ``next_tiers``
+    entry; the dropdown label is :attr:`NextTier.label`. The
+    flattened ``children`` list stays so legacy callers that
+    iterate every child without grouping keep working.
     """
 
     parent: TaxonResponse
     children: list[TaxonResponse]
-    next_rank_hint: str | None
+    next_tiers: list[NextTier] | None = None
 
 
 __all__ = [
@@ -271,6 +301,7 @@ __all__ = [
     "HealthResponse",
     "LinksResponse",
     "MarkerFlags",
+    "NextTier",
     "PathChildrenEnvelope",
     "SearchLinkItem",
     "SpeciesListItem",

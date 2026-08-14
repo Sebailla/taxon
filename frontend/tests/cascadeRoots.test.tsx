@@ -89,7 +89,17 @@ describe("Cascade root tier", () => {
             taxon(10, "Animalia", "kingdom", 1),
             taxon(11, "Plantae", "kingdom", 1),
           ],
-          next_rank_hint: "kingdom",
+          next_tiers: [
+            {
+              rank: "kingdom",
+              label: "Kingdom",
+              examples: ["Animalia", "Plantae"],
+              children: [
+                taxon(10, "Animalia", "kingdom", 1),
+                taxon(11, "Plantae", "kingdom", 1),
+              ],
+            },
+          ],
         }),
       );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
