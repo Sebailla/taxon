@@ -1,18 +1,18 @@
 /** Contract tests for the cascade subphylum tier.
 
 This file pins the cascade's behaviour when a /path-children call
-returns ``next_rank_hint = "class"``. The CLB resolver uses the
-subphylum probe first and only collapses to ``class`` when the
-parent phylum has no subphylum children, so the more common path
-is "Chordata → subphylum children → next picker is Class" — the
-``next_rank_hint`` the backend hands back is already the *post*
-subphylum tier.
+returns ``next_tiers = [{rank: "subphylum", ...}]``. The CLB
+resolver drops the ``rank=`` filter on the children fetch and
+groups children by their actual CLB rank label; the wire envelope
+exposes ``next_tiers`` (one ``NextTier`` per rank group) so the
+cascade UI renders one dropdown per group with the dropdown
+label taken from the tier's ``label`` field.
 
 The cascade renders the chain with one dropdown per picked
 segment plus a trailing picker for the next segment. The trailing
-picker's label is the capitalised ``next_rank_hint`` ("Class" in
-this case) and its options are the response's children (the
-three chordate subphyla).
+picker's label is the tier's ``label`` ("Subphylum" in this case)
+and its options are the response's children (the three chordate
+subphyla).
 */
 
 import { render, screen, waitFor } from "@testing-library/react";
@@ -52,9 +52,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Cascade subphylum tier renders next picker as 'Class'", () => {
+describe("Cascade subphylum tier renders next picker as 'Subphylum'", () => {
   it(
-    "renders Biota → Animalia → Chordata → Class with the response children",
+    "renders Biota → Animalia → Chordata → Subphylum with the response children",
     async () => {
       const fetchMock = vi
         .fn()
@@ -70,7 +70,14 @@ describe("Cascade subphylum tier renders next picker as 'Class'", () => {
           mockFetchJson({
             parent: taxon(1, "Biota", "biota"),
             children: [taxon(10, "Animalia", "kingdom", 1)],
-            next_rank_hint: "kingdom",
+            next_tiers: [
+              {
+                rank: "kingdom",
+                label: "Kingdom",
+                examples: ["Animalia"],
+                children: [taxon(10, "Animalia", "kingdom", 1)],
+              },
+            ],
           }),
         )
         // 3. Pick Animalia → phyla (Chordata).
@@ -78,13 +85,19 @@ describe("Cascade subphylum tier renders next picker as 'Class'", () => {
           mockFetchJson({
             parent: taxon(10, "Animalia", "kingdom"),
             children: [taxon(20, "Chordata", "phylum", 10)],
-            next_rank_hint: "phylum",
+            next_tiers: [
+              {
+                rank: "phylum",
+                label: "Phylum",
+                examples: ["Chordata"],
+                children: [taxon(20, "Chordata", "phylum", 10)],
+              },
+            ],
           }),
         )
         // 4. Pick Chordata → subphylum children (Cephalochordata,
-        //    Tunicata, Vertebrata). The CLB resolver returns
-        //    ``next_rank_hint = "class"`` because subphylum
-        //    advances to class in the cascade tuple.
+        //    Tunicata, Vertebrata). The best-effort resolver emits
+        //    one ``NextTier`` per rank group.
         .mockResolvedValueOnce(
           mockFetchJson({
             parent: taxon(20, "Chordata", "phylum"),
@@ -93,7 +106,22 @@ describe("Cascade subphylum tier renders next picker as 'Class'", () => {
               taxon(31, "Tunicata", "subphylum", 20),
               taxon(32, "Vertebrata", "subphylum", 20),
             ],
-            next_rank_hint: "class",
+            next_tiers: [
+              {
+                rank: "subphylum",
+                label: "Subphylum",
+                examples: [
+                  "Cephalochordata",
+                  "Tunicata",
+                  "Vertebrata",
+                ],
+                children: [
+                  taxon(30, "Cephalochordata", "subphylum", 20),
+                  taxon(31, "Tunicata", "subphylum", 20),
+                  taxon(32, "Vertebrata", "subphylum", 20),
+                ],
+              },
+            ],
           }),
         );
       globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -117,12 +145,13 @@ describe("Cascade subphylum tier renders next picker as 'Class'", () => {
         "Chordata",
       );
 
-      // The trailing picker is labelled "Class" (the next_rank_hint
-      // the resolver returned) and lists the three chordate subphyla.
-      const classDropdown = await screen.findByRole("combobox", {
-        name: "Class",
+      // The trailing picker is labelled "Subphylum" (the tier
+      // label the resolver returned in ``next_tiers[0]``) and
+      // lists the three chordate subphyla.
+      const subphylumDropdown = await screen.findByRole("combobox", {
+        name: "Subphylum",
       });
-      expect(classDropdown).toBeInTheDocument();
+      expect(subphylumDropdown).toBeInTheDocument();
       await waitFor(() => {
         expect(
           screen.getByRole("option", { name: "Cephalochordata" }),

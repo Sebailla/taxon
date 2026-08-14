@@ -60,6 +60,7 @@ from taxon.api.hierarchy import (
 from taxon.api.schemas import (
     LinksResponse,
     MarkerFlags,
+    NextTier,
     PathChildrenEnvelope,
     SearchLinkItem,
     SpeciesListItem,
@@ -120,15 +121,15 @@ def path_children(
                 "Pipe-separated path of canonical names. The endpoint "
                 "walks the segments against the ChecklistBank ``COL2024`` "
                 "dataset and returns the direct children of the deepest "
-                "resolved taxon. CLB's 9-tier taxonomy "
-                "(biota -> kingdom -> phylum -> subphylum -> class -> order "
-                "-> family -> genus -> species) adds a root tier above "
-                "kingdom and a subphylum tier between phylum and class. "
-                "The subphylum tier is collapsed when the parent phylum "
-                "has zero subphylum children (e.g. Arthropoda): the "
-                'resolver emits ``next_rank_hint="order"`` and returns '
-                "class children directly. Example: "
-                "?path=Animalia%7CChordata%7CVertebrata"
+                "resolved taxon. CLB publishes children at off-tuple "
+                "intermediate ranks (infraphylum, parvphylum, megaclass, "
+                "subclass, suborder) so the resolver groups every child "
+                "by its actual rank label and emits one ``NextTier`` "
+                "per group in ``next_tiers``. The cascade UI renders "
+                "one dropdown per group with the dropdown label taken "
+                'from the rank itself ("Infraphylum", "Parvphylum", '
+                '"Megaclass", "Subclass", "Suborder"). Example: '
+                "?path=Animalia%7CChordata%7CVertebrata%7CGnathostomata"
             ),
             min_length=1,
         ),
@@ -144,15 +145,33 @@ def path_children(
     colliding at different depths. The first hit whose canonical
     name matches the segment case-insensitively is the resolver's
     match.
+
+    The children fetch drops the ``rank=`` filter and groups the
+    response by the children's actual rank labels. The wire envelope
+    exposes ``next_tiers`` (one ``NextTier`` per group) so the
+    cascade UI renders one dropdown per rank group.
     """
     segments = [segment for segment in path.split("|") if segment]
     response = clb_list_path_children(segments, client=clb)
     if response is None:
         raise NotFoundError(f"taxon not found: {segments[-1]!r}")
+    next_tiers = (
+        [
+            NextTier(
+                rank=tier.rank,
+                label=tier.label,
+                examples=list(tier.examples),
+                children=[_clb_taxon_to_taxon_response(child) for child in tier.children],
+            )
+            for tier in response.next_tiers
+        ]
+        if response.next_tiers is not None
+        else None
+    )
     return PathChildrenEnvelope(
         parent=_clb_taxon_to_taxon_response(response.parent),
         children=[_clb_taxon_to_taxon_response(child) for child in response.children],
-        next_rank_hint=response.next_rank_hint,
+        next_tiers=next_tiers,
     )
 
 

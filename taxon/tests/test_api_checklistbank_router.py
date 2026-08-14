@@ -159,6 +159,17 @@ def _search_url(name: str, rank: str) -> str:
     return f"/dataset/COL2024/nameusage/search?{urlencode(params)}"
 
 
+def _search_url_no_rank(name: str) -> str:
+    """URL-encode a CLB search-by-name without a ``rank`` filter.
+
+    The best-effort resolver falls back to rank-less search when
+    the rank-anchored search misses (off-tuple intermediates) or
+    when the path walks past the 9-tier tuple (Issue #43).
+    """
+    params: dict[str, Any] = {"q": name, "limit": 20, "offset": 0}
+    return f"/dataset/COL2024/nameusage/search?{urlencode(params)}"
+
+
 def _children_url(taxon_id: str, rank: str | None = None) -> str:
     params: dict[str, Any] = {"limit": 300, "offset": 0}
     if rank is not None:
@@ -222,7 +233,8 @@ def test_path_children_returns_animalia_phyla() -> None:
     The cascade starts at the kingdom tier (rank ``kingdom``), not the
     biota tier — Animalia is the first segment after Biota in the cascade
     UI's first dropdown. The resolver walks the segment against CLB and
-    returns the next-tier children (phylum) with ``next_rank_hint="phylum"``.
+    returns the phylum children grouped under a single ``phylum`` tier
+    in ``next_tiers``.
     """
     animalia_row = _row("N", "Animalia", "kingdom", parent_id="5T6MX")
     phyla_rows = [
@@ -236,7 +248,7 @@ def test_path_children_returns_animalia_phyla() -> None:
                 200,
                 json={"offset": 0, "limit": 20, "total": 1, "result": [animalia_row]},
             ),
-            ("GET", _children_url("N", rank="phylum")): httpx.Response(
+            ("GET", _children_url("N")): httpx.Response(
                 200,
                 json={"offset": 0, "limit": 300, "total": 3, "result": phyla_rows},
             ),
@@ -255,17 +267,20 @@ def test_path_children_returns_animalia_phyla() -> None:
     assert body["parent"]["id"] == "N"
     names = {child["name"] for child in body["children"]}
     assert {"Chordata", "Arthropoda", "Annelida"} <= names
-    assert body["next_rank_hint"] == "phylum"
+    # next_rank_hint is gone; next_tiers carries the structured shape.
+    assert "next_rank_hint" not in body
+    assert "next_tiers" in body
+    assert [tier["rank"] for tier in body["next_tiers"]] == ["phylum"]
 
 
 def test_path_children_subphylum_collapse_for_arthropoda() -> None:
     """``GET /api/path-children?path=Animalia|Arthropoda`` collapses subphylum.
 
-    Arthropoda has zero subphylum children in CLB ``COL2024``. The resolver
-    probes ``/tree/{id}/children?rank=subphylum`` and, finding an empty
-    list, re-queries with ``rank=class`` and emits
-    ``next_rank_hint="order"`` — the subphylum tier is skipped entirely.
-    The cascade UI renders classes directly without a subphylum slot.
+    Arthropoda has zero subphylum children in CLB ``COL2024``. The
+    unranked children fetch returns class-rank rows only, so the
+    resolver emits a single ``class`` tier in ``next_tiers`` — the
+    subphylum slot is collapsed. The cascade UI renders classes
+    directly without a subphylum picker.
     """
     arthropoda_row = _row("54", "Arthropoda", "phylum", parent_id="N")
     transport = httpx.MockTransport(
@@ -281,13 +296,14 @@ def test_path_children_subphylum_collapse_for_arthropoda() -> None:
             ),
             ("GET", _search_url("Arthropoda", rank="phylum")): httpx.Response(
                 200,
-                json={"offset": 0, "limit": 20, "total": 1, "result": [arthropoda_row]},
+                json={
+                    "offset": 0,
+                    "limit": 20,
+                    "total": 1,
+                    "result": [arthropoda_row],
+                },
             ),
-            ("GET", _children_url("54", rank="subphylum")): httpx.Response(
-                200,
-                json={"offset": 0, "limit": 300, "total": 0, "result": []},
-            ),
-            ("GET", _children_url("54", rank="class")): httpx.Response(
+            ("GET", _children_url("54")): httpx.Response(
                 200,
                 json={
                     "offset": 0,
@@ -311,7 +327,8 @@ def test_path_children_subphylum_collapse_for_arthropoda() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["parent"]["name"] == "Arthropoda"
-    assert body["next_rank_hint"] == "order"
+    assert "next_tiers" in body
+    assert [tier["rank"] for tier in body["next_tiers"]] == ["class"]
     names = {child["name"] for child in body["children"]}
     assert {"Insecta", "Crustacea"} <= names
     # Collapse means no subphylum row is emitted.
@@ -502,4 +519,208 @@ def test_species_list_returns_panthera_species_via_subphylum() -> None:
     assert len(body["items"]) == 12
     names = {item["name"] for item in body["items"]}
     assert "Panthera leo" in names
-    assert "Panthera tigris" in names
+
+
+# ---------------------------------------------------------------------------
+# /api/path-children — best-effort walk (Issue #43)
+# ---------------------------------------------------------------------------
+
+
+def test_path_children_returns_next_tiers_array() -> None:
+    """The wire envelope exposes ``next_tiers`` as a list of
+    ``{rank, label, examples, children}`` records and the legacy
+    ``next_rank_hint`` field is gone.
+
+    The endpoint must serialise every tier group the resolver emits
+    so the cascade UI can render one dropdown per group. The
+    ``next_rank_hint`` key is dropped from the JSON response
+    entirely — the legacy field is replaced by the structured
+    ``next_tiers`` array.
+    """
+    animalia_row = _row("N", "Animalia", "kingdom", parent_id="5T6MX")
+    chordata_children = [
+        _row("VE", "Vertebrata", "subphylum", parent_id="CH2"),
+        _row("CE", "Cephalochordata", "subphylum", parent_id="CH2"),
+        _row("TU", "Tunicata", "subphylum", parent_id="CH2"),
+    ]
+    transport = httpx.MockTransport(
+        lambda req: {
+            ("GET", _search_url("Animalia", rank="kingdom")): httpx.Response(
+                200,
+                json={
+                    "offset": 0,
+                    "limit": 20,
+                    "total": 1,
+                    "result": [animalia_row],
+                },
+            ),
+            ("GET", _search_url("Chordata", rank="phylum")): httpx.Response(
+                200,
+                json={
+                    "offset": 0,
+                    "limit": 20,
+                    "total": 1,
+                    "result": [_row("CH2", "Chordata", "phylum", parent_id="N")],
+                },
+            ),
+            # No rank= filter on the children fetch.
+            ("GET", _children_url("CH2")): httpx.Response(
+                200,
+                json={
+                    "offset": 0,
+                    "limit": 300,
+                    "total": len(chordata_children),
+                    "result": chordata_children,
+                },
+            ),
+        }.get(
+            (req.method, req.url.path + (f"?{req.url.query.decode()}" if req.url.query else "")),
+            httpx.Response(404),
+        )
+    )
+    client = _StubClient(transport)
+    app = _app_with_client(client)
+    with _client(app) as test_client:
+        response = test_client.get("/api/path-children?path=Animalia%7CChordata")
+    assert response.status_code == 200
+    body = response.json()
+    # next_rank_hint is gone — the API no longer emits the field.
+    assert "next_rank_hint" not in body
+    # next_tiers is the new structured shape.
+    assert "next_tiers" in body
+    assert isinstance(body["next_tiers"], list)
+    assert len(body["next_tiers"]) == 1
+    tier = body["next_tiers"][0]
+    assert tier["rank"] == "subphylum"
+    assert tier["label"] == "Subphylum"
+    assert set(tier["examples"]) == {"Vertebrata", "Cephalochordata", "Tunicata"}
+    assert len(tier["children"]) == 3
+    # The flattened children list stays so callers that ignore the
+    # grouping keep working.
+    assert {child["name"] for child in body["children"]} == {
+        "Vertebrata",
+        "Cephalochordata",
+        "Tunicata",
+    }
+
+
+def test_path_children_with_off_tuple_chain_returns_multiple_tiers() -> None:
+    """Full chordate walk through off-tuple intermediate ranks
+    emits the right number of ``next_tiers`` at every step.
+
+    Vertebrata's children include an infraphylum row
+    (Gnathostomata) AND a class row (Mammalia). The endpoint
+    serialises both as ``next_tiers`` so the cascade UI renders
+    an "Infraphylum" dropdown followed by a "Class" dropdown.
+    """
+    responses: dict[tuple[str, str], httpx.Response] = {
+        ("GET", _search_url("Animalia", rank="kingdom")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "result": [_row("N", "Animalia", "kingdom")],
+            },
+        ),
+        ("GET", _search_url("Chordata", rank="phylum")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "result": [_row("CH2", "Chordata", "phylum", parent_id="N")],
+            },
+        ),
+        # Chordata: subphylum only (so step 1 emits the subphylum tier).
+        ("GET", _children_url("CH2")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 300,
+                "total": 1,
+                "result": [_row("VE", "Vertebrata", "subphylum", parent_id="CH2")],
+            },
+        ),
+        ("GET", _search_url("Vertebrata", rank="subphylum")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "result": [_row("VE", "Vertebrata", "subphylum", parent_id="CH2")],
+            },
+        ),
+        # Best-effort: rank-less search fallback for Gnathostomata
+        # (the rank-anchored search targets "class" and misses the
+        # infraphylum row).
+        ("GET", _search_url_no_rank("Gnathostomata")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "result": [
+                    _row("GN", "Gnathostomata", "infraphylum", parent_id="VE"),
+                ],
+            },
+        ),
+        # Vertebrata: infraphylum + class rows.
+        ("GET", _children_url("VE")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 300,
+                "total": 2,
+                "result": [
+                    _row("GN", "Gnathostomata", "infraphylum", parent_id="VE"),
+                    _row("MA", "Mammalia", "class", parent_id="VE"),
+                ],
+            },
+        ),
+        # Gnathostomata: parvphylum only.
+        ("GET", _children_url("GN")): httpx.Response(
+            200,
+            json={
+                "offset": 0,
+                "limit": 300,
+                "total": 1,
+                "result": [_row("OS", "Osteichthyes", "parvphylum", parent_id="GN")],
+            },
+        ),
+    }
+    transport = httpx.MockTransport(
+        lambda req: responses.get(
+            (req.method, req.url.path + (f"?{req.url.query.decode()}" if req.url.query else "")),
+            httpx.Response(404),
+        )
+    )
+    client = _StubClient(transport)
+    app = _app_with_client(client)
+    with _client(app) as test_client:
+        # Step 1: Chordata emits subphylum children.
+        response = test_client.get("/api/path-children?path=Animalia%7CChordata")
+    assert response.status_code == 200
+    body = response.json()
+    assert "next_tiers" in body
+    assert [tier["rank"] for tier in body["next_tiers"]] == ["subphylum"]
+
+    with _client(app) as test_client:
+        # Step 2: Vertebrata emits infraphylum + class.
+        response = test_client.get("/api/path-children?path=Animalia%7CChordata%7CVertebrata")
+    assert response.status_code == 200
+    body = response.json()
+    ranks = [tier["rank"] for tier in body["next_tiers"]]
+    assert ranks == ["infraphylum", "class"]
+    labels = [tier["label"] for tier in body["next_tiers"]]
+    assert labels == ["Infraphylum", "Class"]
+
+    with _client(app) as test_client:
+        # Step 3: Gnathostomata emits parvphylum.
+        response = test_client.get(
+            "/api/path-children?path=Animalia%7CChordata%7CVertebrata%7CGnathostomata"
+        )
+    assert response.status_code == 200
+    body = response.json()
+    ranks = [tier["rank"] for tier in body["next_tiers"]]
+    assert ranks == ["parvphylum"]

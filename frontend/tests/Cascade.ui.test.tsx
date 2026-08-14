@@ -19,7 +19,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
-import type { TaxonResponse } from "../src/api";
+import type { NextTier, TaxonResponse } from "../src/api";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -45,6 +45,19 @@ function taxon(
     is_uncertain: false,
     is_unassigned: false,
   };
+}
+
+/** Build a single-tier ``next_tiers`` array from a rank label and
+ *  the children the resolver would group under it. */
+function singleTier(rank: string, children: TaxonResponse[]): NextTier[] {
+  return [
+    {
+      rank,
+      label: rank.charAt(0).toUpperCase() + rank.slice(1),
+      examples: children.slice(0, 3).map((child) => child.name),
+      children,
+    },
+  ];
 }
 
 afterEach(() => {
@@ -90,7 +103,7 @@ describe("Cascade UI: loading and empty states", () => {
 
   it("renders 'No children' when the deepest taxon has no species children", async () => {
     // Mock Animalia's children to return empty. The cascade
-    // classifies Animalia as a leaf (next_rank_hint = null) and
+    // classifies Animalia as a leaf (next_tiers = null) and
     // skips the species fetch (children are not species-rank),
     // then resets the species status to idle so the SpeciesList
     // renders the empty state.
@@ -108,7 +121,7 @@ describe("Cascade UI: loading and empty states", () => {
         mockFetchJson({
           parent: taxon(1, "Biota", "biota"),
           children: [taxon(10, "Animalia", "kingdom", 1)],
-          next_rank_hint: "kingdom",
+          next_tiers: singleTier("kingdom", [taxon(10, "Animalia", "kingdom", 1)]),
         }),
       )
       // 3. /path-children?path=Biota|Animalia — leaves.
@@ -116,7 +129,7 @@ describe("Cascade UI: loading and empty states", () => {
         mockFetchJson({
           parent: taxon(10, "Animalia", "kingdom"),
           children: [],
-          next_rank_hint: null,
+          next_tiers: null,
         }),
       );
 
@@ -167,7 +180,7 @@ describe("Cascade UI: inclusion toggles", () => {
         mockFetchJson({
           parent: taxon(1, "Biota", "biota"),
           children: [taxon(10, "Animalia", "kingdom", 1)],
-          next_rank_hint: "kingdom",
+          next_tiers: singleTier("kingdom", [taxon(10, "Animalia", "kingdom", 1)]),
         }),
       )
       // 3. After picking Animalia.
@@ -175,26 +188,25 @@ describe("Cascade UI: inclusion toggles", () => {
         mockFetchJson({
           parent: taxon(10, "Animalia", "kingdom"),
           children: [taxon(20, "Chordata", "phylum", 10)],
-          next_rank_hint: "phylum",
+          next_tiers: singleTier("phylum", [taxon(20, "Chordata", "phylum", 10)]),
         }),
       )
       // 4. After picking Chordata → subphylum children (the
-      //    resolver returns next_rank_hint = "class" because
-      //    subphylum advances to class in the cascade tuple).
+      //    best-effort resolver emits one ``subphylum`` tier).
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(20, "Chordata", "phylum"),
           children: [taxon(30, "Vertebrata", "subphylum", 20)],
-          next_rank_hint: "class",
+          next_tiers: singleTier("subphylum", [taxon(30, "Vertebrata", "subphylum", 20)]),
         }),
       )
-      // 5. After picking Vertebrata (from the "Class" picker)
+      // 5. After picking Vertebrata (from the "Subphylum" picker)
       //    → genus Gadus (leaf).
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(30, "Vertebrata", "subphylum"),
           children: [taxon(40, "Gadus", "genus", 30)],
-          next_rank_hint: "genus",
+          next_tiers: singleTier("genus", [taxon(40, "Gadus", "genus", 30)]),
         }),
       )
       // 6. After picking Gadus → species Gadus morhua (leaf).
@@ -202,7 +214,7 @@ describe("Cascade UI: inclusion toggles", () => {
         mockFetchJson({
           parent: taxon(40, "Gadus", "genus"),
           children: [taxon(50, "Gadus morhua", "species", 40)],
-          next_rank_hint: null,
+          next_tiers: null,
         }),
       )
       // 7. Auto-fetched species list for Gadus.
@@ -240,10 +252,10 @@ describe("Cascade UI: inclusion toggles", () => {
       screen.getByRole("combobox", { name: "Phylum" }),
       "Chordata",
     );
-    // Chordata returns subphylum children under the "Class" picker.
+    // Chordata returns subphylum children under the "Subphylum" picker.
     await screen.findByRole("option", { name: "Vertebrata" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Class" }),
+      screen.getByRole("combobox", { name: "Subphylum" }),
       "Vertebrata",
     );
     await screen.findByRole("option", { name: "Gadus" });

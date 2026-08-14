@@ -7,12 +7,12 @@ no React imports, and can be tested in isolation.
 
 The cascade renders N dropdowns — one per rank layer the backend
 has served. CoL ships 40+ ranks with intermediate ranks
-(subphylum, gigaclass, infraphylum, parvphylum, ...) that the
-fixed six-rank ladder skipped. Each layer keeps its own
-``(children, next_rank_hint)`` snapshot so the dropdowns for
-ancestor segments stay populated even after the user picks a
-descendant — the user can then change a parent and the
-descendant dropdowns reset.
+(subphylum, gigaclass, infraphylum, parvphylum, megaclass,
+subclass, suborder, ...) that the fixed six-rank ladder skipped.
+Each layer keeps its own ``(children, next_tiers)`` snapshot so
+the dropdowns for ancestor segments stay populated even after
+the user picks a descendant — the user can then change a parent
+and the descendant dropdowns reset.
 
 The state machine:
 
@@ -20,20 +20,25 @@ The state machine:
   picked so far. The empty path means "show the root kingdom
   dropdown".
 - ``levelByPath`` maps ``path.join("|")`` → ``(children,
-  next_rank_hint)`` so each dropdown shows the children of its
+  next_tiers)`` so each dropdown shows the children of its
   own path segment. The cascade reads the keys in order to
   render N dropdowns.
 - ``species`` is loaded separately when the cascade reaches a
-  leaf (a genus row whose children have ``next_rank_hint ===
-  null``).
+  leaf (a genus row whose children have ``next_tiers === null``).
 */
 
-import type { TaxonResponse } from "../api";
+import type { NextTier, TaxonResponse } from "../api";
 import type { InclusionClass } from "./Toggles";
 
 export interface LevelSnapshot {
   children: TaxonResponse[];
-  nextRankHint: string | null;
+  /**
+   * Tier groups the backend returned for this level, or
+   * ``null`` when the deepest taxon is a confirmed leaf
+   * (no children at any rank). ``undefined`` while the
+   * /path-children call is still in flight.
+   */
+  nextTiers: NextTier[] | null | undefined;
 }
 
 export interface CascadeState {
@@ -109,12 +114,12 @@ export function cascadeReducer(state: CascadeState, action: Action): CascadeStat
       // Mark the new deepest path as loading so the dropdown
       // shows the "Loading children…" placeholder until the
       // /path-children call returns. The placeholder's
-      // ``nextRankHint`` is undefined (not null) so the species
+      // ``nextTiers`` is undefined (not null) so the species
       // fetch below does not mistake "we haven't fetched yet"
       // for "we have reached a leaf".
       nextLevelByPath[newKey] = state.levelByPath[newKey] ?? {
         children: [],
-        nextRankHint: undefined,
+        nextTiers: undefined,
       };
       const isNewDeepestLevel = !state.levelByPath[newKey];
       return {

@@ -11,9 +11,10 @@ These tests pin the new contract:
   once the user picks Biota.
 - Each segment the user picks triggers a /path-children call
   with the cumulative path; the next dropdown renders with
-  the response's children.
+  the response's ``next_tiers`` (one ``NextTier`` per rank
+  group).
 - The cascade renders one dropdown per non-leaf response.
-  When ``next_rank_hint`` is null (the deepest taxon has no
+  When ``next_tiers`` is null (the deepest taxon has no
   children), the species list takes over via /api/species-list.
 - Changing a parent segment clears every child segment so no
   stale state leaks across picks.
@@ -24,13 +25,13 @@ The tests use the same mock infrastructure as the cascade
 component tests (mockFetchSequence) but feed /path-children
 instead of the six rank-named endpoints.
 
-Note on tier labels: the CLB resolver returns
-``next_rank_hint = "class"`` for Chordata because subphylum
-collapses into the post-subphylum tier. The cascade therefore
+Note on tier labels: the best-effort resolver emits
+``next_tiers = [{rank: "subphylum", label: "Subphylum", ...}]``
+when Chordata has subphylum children. The cascade therefore
 labels the picker that surfaces Cephalochordata / Tunicata /
-Vertebrata "Class" (the next_rank_hint), not "Subphylum"
-(the children's rank). Subsequent picks are picked from
-this "Class" picker.
+Vertebrata "Subphylum" (the tier label), not a derived next
+rank. Subsequent picks are picked from this "Subphylum"
+picker.
 */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -38,7 +39,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
-import type { TaxonResponse } from "../src/api";
+import type { NextTier, TaxonResponse } from "../src/api";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -90,6 +91,19 @@ function taxon(
   };
 }
 
+/** Build a single-tier ``next_tiers`` array from a rank label and
+ *  the children the resolver would group under it. */
+function singleTier(rank: string, children: TaxonResponse[]): NextTier[] {
+  return [
+    {
+      rank,
+      label: rank.charAt(0).toUpperCase() + rank.slice(1),
+      examples: children.slice(0, 3).map((child) => child.name),
+      children,
+    },
+  ];
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -125,10 +139,13 @@ describe("Path-aware cascade initial render", () => {
 // Chain through the cascade tier tuple
 // ---------------------------------------------------------------------------
 
-describe("Path-aware cascade chains through the 9-tier tuple", () => {
+describe("Path-aware cascade chains through the dynamic tiers", () => {
   it(
-    "renders one dropdown per non-leaf response so the Chordata → subphylum → … chain works",
+    "renders one dropdown per tier in next_tiers so the Chordata → subphylum chain works",
     async () => {
+      const phyla = [taxon(20, "Chordata", "phylum", 10)];
+      const subphyla = [taxon(30, "Vertebrata", "subphylum", 20)];
+      const classes = [taxon(40, "Mammalia", "class", 30)];
       mockFetchSequence([
         // Initial root list — /api/kingdoms returns Biota + Viruses.
         [
@@ -142,30 +159,29 @@ describe("Path-aware cascade chains through the 9-tier tuple", () => {
         mockFetchJson({
           parent: taxon(1, "Biota", "biota"),
           children: [taxon(10, "Animalia", "kingdom", 1)],
-          next_rank_hint: "kingdom",
+          next_tiers: singleTier("kingdom", [taxon(10, "Animalia", "kingdom", 1)]),
         }),
         // /path-children?path=Biota|Animalia → phyla. Chordata
-        // is the only phylum; the next_rank_hint is "phylum".
+        // is the only phylum; the resolver emits a single
+        // ``phylum`` tier.
         mockFetchJson({
           parent: taxon(10, "Animalia", "kingdom"),
-          children: [taxon(20, "Chordata", "phylum", 10)],
-          next_rank_hint: "phylum",
+          children: phyla,
+          next_tiers: singleTier("phylum", phyla),
         }),
         // /path-children?path=Biota|Animalia|Chordata → subphylum
-        // children. The CLB resolver returns
-        // ``next_rank_hint = "class"`` because subphylum
-        // advances to class in the cascade tuple.
+        // children. The resolver emits one ``subphylum`` tier.
         mockFetchJson({
           parent: taxon(20, "Chordata", "phylum"),
-          children: [taxon(30, "Vertebrata", "subphylum", 20)],
-          next_rank_hint: "class",
+          children: subphyla,
+          next_tiers: singleTier("subphylum", subphyla),
         }),
         // /path-children?path=Biota|Animalia|Chordata|Vertebrata →
         // class children. Downstream ranks follow the same loop.
         mockFetchJson({
           parent: taxon(30, "Vertebrata", "subphylum"),
-          children: [taxon(40, "Mammalia", "class", 30)],
-          next_rank_hint: "order",
+          children: classes,
+          next_tiers: singleTier("class", classes),
         }),
       ]);
 
@@ -187,7 +203,7 @@ describe("Path-aware cascade chains through the 9-tier tuple", () => {
       await screen.findByRole("option", { name: "Chordata" });
 
       // Step 3: pick Chordata → cascade loads the subphylum
-      // children under the "Class" picker (the next_rank_hint
+      // children under the "Subphylum" picker (the tier label
       // Chordata returns).
       await user.selectOptions(
         screen.getByRole("combobox", { name: "Phylum" }),
@@ -195,12 +211,12 @@ describe("Path-aware cascade chains through the 9-tier tuple", () => {
       );
       await screen.findByRole("option", { name: "Vertebrata" });
 
-      // The next picker is labelled "Class" (subphylum → class
-      // in the cascade tier tuple).
-      const classDropdown = await screen.findByRole("combobox", {
-        name: "Class",
+      // The next picker is labelled "Subphylum" (the tier's
+      // own label in next_tiers[0]).
+      const subphylumDropdown = await screen.findByRole("combobox", {
+        name: "Subphylum",
       });
-      expect(classDropdown).toBeInTheDocument();
+      expect(subphylumDropdown).toBeInTheDocument();
     },
   );
 });
@@ -211,6 +227,15 @@ describe("Path-aware cascade chains through the 9-tier tuple", () => {
 
 describe("Path-aware cascade reaches species after a genus is picked", () => {
   it("fetches the species list when the user picks a genus", async () => {
+    const kingdoms = [taxon(10, "Animalia", "kingdom", 1)];
+    const phyla = [taxon(20, "Chordata", "phylum", 10)];
+    const subphyla = [
+      taxon(30, "Cephalochordata", "subphylum", 20),
+      taxon(31, "Tunicata", "subphylum", 20),
+      taxon(32, "Vertebrata", "subphylum", 20),
+    ];
+    const genera = [taxon(40, "Gadus", "genus", 32)];
+    const species = [taxon(50, "Gadus morhua", "species", 40)];
     mockFetchSequence([
       // /api/kingdoms — root list.
       [
@@ -223,39 +248,35 @@ describe("Path-aware cascade reaches species after a genus is picked", () => {
       // /path-children?path=Biota
       mockFetchJson({
         parent: taxon(1, "Biota", "biota"),
-        children: [taxon(10, "Animalia", "kingdom", 1)],
-        next_rank_hint: "kingdom",
+        children: kingdoms,
+        next_tiers: singleTier("kingdom", kingdoms),
       }),
       // /path-children?path=Biota|Animalia
       mockFetchJson({
         parent: taxon(10, "Animalia", "kingdom"),
-        children: [taxon(20, "Chordata", "phylum", 10)],
-        next_rank_hint: "phylum",
+        children: phyla,
+        next_tiers: singleTier("phylum", phyla),
       }),
       // /path-children?path=Biota|Animalia|Chordata — Chordata
       // carries subphylum children in this chain.
       mockFetchJson({
         parent: taxon(20, "Chordata", "phylum"),
-        children: [
-          taxon(30, "Cephalochordata", "subphylum", 20),
-          taxon(31, "Tunicata", "subphylum", 20),
-          taxon(32, "Vertebrata", "subphylum", 20),
-        ],
-        next_rank_hint: "class",
+        children: subphyla,
+        next_tiers: singleTier("subphylum", subphyla),
       }),
       // /path-children?path=Biota|Animalia|Chordata|Vertebrata
-      // (the subphylum Vertebrata was picked from the "Class"
-      // picker that surfaces the subphylum children).
+      // (the subphylum Vertebrata was picked from the
+      // "Subphylum" picker).
       mockFetchJson({
         parent: taxon(32, "Vertebrata", "subphylum"),
-        children: [taxon(40, "Gadus", "genus", 32)],
-        next_rank_hint: "genus",
+        children: genera,
+        next_tiers: singleTier("genus", genera),
       }),
       // /path-children?path=Biota|Animalia|Chordata|Vertebrata|Gadus
       mockFetchJson({
         parent: taxon(40, "Gadus", "genus"),
-        children: [taxon(50, "Gadus morhua", "species", 40)],
-        next_rank_hint: null,
+        children: species,
+        next_tiers: null,
       }),
       // The species list at the Gadus path.
       mockFetchJson({
@@ -282,9 +303,9 @@ describe("Path-aware cascade reaches species after a genus is picked", () => {
       await screen.findByRole("combobox", { name: "Phylum" }),
       "Chordata",
     );
-    // Chordata's subphylum children render under the "Class" picker.
+    // Chordata's subphylum children render under the "Subphylum" picker.
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Class" }),
+      await screen.findByRole("combobox", { name: "Subphylum" }),
       "Vertebrata",
     );
     await user.selectOptions(
@@ -327,7 +348,7 @@ describe("Path-aware cascade resets children when a parent changes", () => {
             mockFetchJson({
               parent: taxon(10, "Animalia", "kingdom"),
               children: [taxon(20, "Chordata", "phylum", 10)],
-              next_rank_hint: "phylum",
+              next_tiers: singleTier("phylum", [taxon(20, "Chordata", "phylum", 10)]),
             }),
           );
         }
@@ -336,7 +357,7 @@ describe("Path-aware cascade resets children when a parent changes", () => {
             mockFetchJson({
               parent: taxon(11, "Plantae", "kingdom"),
               children: [taxon(30, "Tracheophyta", "phylum", 11)],
-              next_rank_hint: "phylum",
+              next_tiers: singleTier("phylum", [taxon(30, "Tracheophyta", "phylum", 11)]),
             }),
           );
         }
@@ -349,7 +370,10 @@ describe("Path-aware cascade resets children when a parent changes", () => {
                 taxon(10, "Animalia", "kingdom", 1),
                 taxon(11, "Plantae", "kingdom", 1),
               ],
-              next_rank_hint: "kingdom",
+              next_tiers: singleTier("kingdom", [
+                taxon(10, "Animalia", "kingdom", 1),
+                taxon(11, "Plantae", "kingdom", 1),
+              ]),
             }),
           );
         }
@@ -366,7 +390,7 @@ describe("Path-aware cascade resets children when a parent changes", () => {
         "Biota",
       );
       await user.selectOptions(
-        screen.getByRole("combobox", { name: "Kingdom" }),
+        await screen.findByRole("combobox", { name: "Kingdom" }),
         "Animalia",
       );
       await screen.findByRole("option", { name: "Chordata" });
