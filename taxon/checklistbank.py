@@ -142,6 +142,36 @@ class ChecklistBankClient:
         body = response.json()
         return [_parse_taxon(row) for row in body.get("result", [])]
 
+    def list_roots(
+        self,
+        dataset_key: str | None = None,
+        limit: int = 20,
+    ) -> list[ChecklistBankTaxon]:
+        """Return the root-tier taxa of ``dataset_key``.
+
+        ChecklistBank exposes the ``/dataset/{key}/tree`` endpoint which
+        lists the root nodes (Biota + Viruses for ``COL2024``). The
+        cascade UI uses this as the initial dropdown so the user can
+        pick a top-level clade before drilling into kingdoms or virus
+        realms.
+
+        The endpoint carries the same row shape as
+        ``/tree/{id}/children`` (flat: ``id``, ``name``, ``rank``,
+        ``parentId``, ...); the parser handles both transparently.
+        """
+        params: dict[str, Any] = {"limit": limit}
+        effective_key = dataset_key if dataset_key is not None else self._dataset_key
+        response = self._request(
+            lambda c: c.get(
+                f"{self._base_url}/dataset/{effective_key}/tree",
+                params=params,
+            )
+        )
+        if response is None:
+            return []
+        body = response.json()
+        return [_parse_taxon(row) for row in body.get("result", [])]
+
     def search(
         self,
         q: str,
@@ -219,8 +249,8 @@ def _parse_taxon(row: dict[str, Any]) -> ChecklistBankTaxon:
     Missing optional fields coerce to ``None`` so callers can
     branch without ``KeyError``. The cascade uses ``name`` for
     dropdown labels — CLB does not separate canonical from
-    scientific names the way GBIF does; ``canonical_name`` and
-    ``scientific_name`` mirror GBIF's shape so the cascade UI
+    scientific names; ``canonical_name`` and
+    ``scientific_name`` carry the same value so the cascade UI
     does not need to branch on backend.
     """
     payload: dict[str, Any] = row.get("usage", row)
