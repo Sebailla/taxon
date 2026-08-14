@@ -30,13 +30,16 @@ The first segment's rank is the cascade root: either ``"biota"``
 starts at a kingdom like ``Animalia``). Subsequent segments use
 the cascade tier tuple, advancing one slot per segment.
 
-The subphylum collapse rule (phylum with zero subphylum children →
-return class children directly) is NOT in this slice. PR #2b adds
-it. In PR #2a, the resolver returns subphylum children verbatim
-when the parent phylum has any and emits
-``next_rank_hint = "class"``; phyla with no subphylum children
-return an empty list with ``next_rank_hint = "class"`` and the
-frontend renders an empty dropdown.
+Subphylum collapse rule (PR #2b): when the cascade reaches a
+phylum, the resolver probes ``/tree/{id}/children?rank=subphylum``
+first. If the response is non-empty the resolver returns those
+subphyla with ``next_rank_hint = "class"`` (no collapse). If the
+response is empty the resolver re-probes with ``rank=class`` and
+returns the phylum's classes directly with
+``next_rank_hint = "order"`` — the subphylum tier is skipped
+entirely. This is one-shot: a phylum with no subphylum AND no
+class children returns ``children=[]`` with ``next_rank_hint=None``
+so the cascade UI renders an empty leaf dropdown. No recursion.
 
 The shape returned to the (future) API route is the same
 :class:`PathChildrenResponse` dataclass the previous resolver
@@ -120,21 +123,7 @@ def list_path_children(
     if deepest is None:
         return None
 
-    # Fetch the children. The cascade renders one dropdown per
-    # tier; the resolver filters the children to the next cascade
-    # tier so the dropdown shows only the rows the user can pick
-    # to advance the chain.
-    next_tier_rank = _next_tier_for(deepest.rank)
-    if next_tier_rank is None:
-        return PathChildrenResponse(parent=deepest, children=[], next_rank_hint=None)
-
-    children_rows = clb.get_children(deepest.taxon_id, rank=next_tier_rank)
-
-    # The cascade UI needs the tier label even when the current
-    # parent has no children at that tier (e.g. an extinct phylum
-    # with no surviving subphylum). The frontend renders an empty
-    # dropdown so the user knows there is no further tier.
-    next_rank_hint: str | None = next_tier_rank.lower()
+    children_rows, next_rank_hint = _children_for(deepest, clb)
 
     return PathChildrenResponse(
         parent=deepest,
@@ -233,9 +222,11 @@ def _next_tier_for(rank: str) -> str | None:
     ``None`` when the chain has reached the leaf and there is
     no next tier.
 
-    The mapping matches the 9-tier tuple. The subphylum tier
-    always appears as a real intermediate — PR #2b adds the
-    collapse rule for phyla with no subphylum children.
+    The mapping matches the 9-tier tuple. For phylum parents the
+    static mapping returns ``"subphylum"``; the actual fetch
+    logic in :func:`_children_for` may collapse that to ``"class"``
+    when the phylum has no subphylum children (the subphylum
+    collapse rule from PR #2b).
     """
     cascade_next_tier: dict[str, str] = {
         "biota": "kingdom",
@@ -249,6 +240,68 @@ def _next_tier_for(rank: str) -> str | None:
         "species": "species",
     }
     return cascade_next_tier.get(rank.lower())
+
+
+def _children_for(
+    parent: ChecklistBankTaxon,
+    client: ChecklistBankClient,
+) -> tuple[list[ChecklistBankTaxon], str | None]:
+    """Return ``(children, next_rank_hint)`` for ``parent``.
+
+    The cascade renders one dropdown per tier. Given a parent
+    at some rank, this helper fetches the parent's children at
+    the next cascade tier and emits the tier label the frontend
+    needs for the dropdown placeholder.
+
+    Subphylum collapse (PR #2b): when ``_next_tier_for(parent.rank)``
+    returns ``"subphylum"`` (i.e. the parent is a phylum), the
+    helper probes ``/tree/{id}/children?rank=subphylum`` first:
+
+    - **Non-empty** subphylum response: return those subphyla with
+      ``next_rank_hint = "class"``. No collapse.
+    - **Empty** subphylum response: re-query with
+      ``rank=class`` and return the phylum's classes directly
+      with ``next_rank_hint = "order"`` (skipping subphylum
+      entirely). If the class query also returns ``[]``, the
+      helper emits ``next_rank_hint = None`` so the cascade UI
+      renders the leaf dropdown.
+
+    The collapse is one-shot (no recursion): a phylum with zero
+    subphylum children queries ``rank=class`` once. A fossil
+    phylum with no subphylum AND no class children terminates
+    cleanly with an empty list and ``None`` hint.
+
+    For non-phylum parents the collapse rule does not fire: the
+    helper queries ``rank=next_tier`` once and emits
+    ``next_rank_hint = next_tier.lower()``. The leaf case
+    (``next_tier is None``) emits ``children=[]`` with
+    ``next_rank_hint=None`` so the cascade UI stops cleanly.
+    """
+    next_tier_rank = _next_tier_for(parent.rank)
+    if next_tier_rank is None:
+        # Leaf parent (e.g. species): no further tier to render.
+        return [], None
+
+    if next_tier_rank == "subphylum":
+        # Subphylum collapse probe (PR #2b). Most phyla in
+        # CLB's COL2024 dataset have zero subphylum children
+        # (e.g. Arthropoda); only Chordata carries the three
+        # chordate subphyla. Probe first; collapse on empty.
+        subphyla = client.get_children(parent.taxon_id, rank="subphylum")
+        if subphyla:
+            return subphyla, "class"
+        # Collapse: skip subphylum, return classes directly.
+        classes = client.get_children(parent.taxon_id, rank="class")
+        if not classes:
+            # Fossil phylum with no subphylum AND no class
+            # children: terminate cleanly. The cascade UI
+            # renders an empty dropdown.
+            return [], None
+        return classes, "order"
+
+    # Standard path: parent is not a phylum, so no collapse.
+    children_rows = client.get_children(parent.taxon_id, rank=next_tier_rank)
+    return children_rows, next_tier_rank.lower()
 
 
 __all__ = [

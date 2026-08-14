@@ -452,3 +452,182 @@ def test_to_taxon_row_carries_clb_id_strings() -> None:
     assert isinstance(response.children, list)
     for child in response.children:
         assert isinstance(child, ChecklistBankTaxon)
+
+
+# ---------------------------------------------------------------------------
+# Subphylum collapse (PR #2b)
+# ---------------------------------------------------------------------------
+#
+# Most phyla in CLB's COL2024 dataset have zero subphylum children
+# (e.g. Arthropoda); only Chordata carries the three chordate
+# subphyla. The resolver probes ``/tree/{id}/children?rank=subphylum``
+# and only renders subphylum children when CLB returns a non-empty
+# list. An empty subphylum probe triggers a one-shot collapse:
+# re-query with ``rank=class`` and skip the subphylum tier
+# entirely — the next dropdown shows the phylum's classes with
+# ``next_rank_hint="order"``.
+#
+# The collapse is intentionally one-shot (not recursive). A fossil
+# phylum with no subphylum AND no class children terminates the
+# cascade cleanly with ``children=[]`` and ``next_rank_hint=None``;
+# the frontend treats that as a leaf and renders an empty dropdown.
+
+
+def test_phylum_with_subphylum_returns_subphylum_children() -> None:
+    """``Animalia|Chordata`` returns Chordata's three subphylum
+    children (Cephalochordata, Tunicata, Vertebrata) with
+    ``next_rank_hint="class"``.
+
+    The subphylum probe finds non-empty children, so the resolver
+    returns them verbatim — no collapse. The next-tier hint stays
+    at ``"class"`` because subphylum advances to class in the
+    cascade tuple.
+    """
+    chordata_subphyla = [
+        _row("CE", "Cephalochordata", "subphylum", parent_id="CH2"),
+        _row("TU", "Tunicata", "subphylum", parent_id="CH2"),
+        _row("VE", "Vertebrata", "subphylum", parent_id="CH2"),
+    ]
+    transport = _transport(
+        {
+            ("GET", _search_path("Animalia", rank="kingdom")): _search_200(
+                [_row("N", "Animalia", "kingdom", parent_id="5T6MX")]
+            ),
+            ("GET", _search_path("Chordata", rank="phylum")): _search_200(
+                [_row("CH2", "Chordata", "phylum", parent_id="N")]
+            ),
+            ("GET", _children_path("CH2", rank="subphylum")): _children_200(chordata_subphyla),
+        }
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=transport))
+    response = clb_path_children.list_path_children(["Animalia", "Chordata"], client=client)
+    assert response is not None
+    assert response.parent.taxon_id == "CH2"
+    assert response.parent.rank == "phylum"
+    assert {child.canonical_name for child in response.children} == {
+        "Cephalochordata",
+        "Tunicata",
+        "Vertebrata",
+    }
+    assert all(child.rank == "subphylum" for child in response.children)
+    assert response.next_rank_hint == "class"
+
+
+def test_phylum_without_subphylum_collapses_to_class() -> None:
+    """``Animalia|Arthropoda`` collapses the subphylum tier:
+    Arthropoda's subphylum probe returns ``[]``, the resolver
+    re-queries with ``rank=class`` and returns the class children
+    directly with ``next_rank_hint="order"``.
+
+    The cascade UI receives 7 kingdoms → Arthropoda → classes
+    (skipping the subphylum slot) → orders → families → genera
+    → species. No empty dropdown renders at the subphylum tier.
+    """
+    arthropoda_classes = [
+        _row("IN", "Insecta", "class", parent_id="AR"),
+        _row("AR", "Arachnida", "class", parent_id="AR"),
+        _row("CR", "Crustacea", "class", parent_id="AR"),
+    ]
+    transport = _transport(
+        {
+            ("GET", _search_path("Animalia", rank="kingdom")): _search_200(
+                [_row("N", "Animalia", "kingdom", parent_id="5T6MX")]
+            ),
+            ("GET", _search_path("Arthropoda", rank="phylum")): _search_200(
+                [_row("AR", "Arthropoda", "phylum", parent_id="N")]
+            ),
+            ("GET", _children_path("AR", rank="subphylum")): _children_200([]),
+            ("GET", _children_path("AR", rank="class")): _children_200(arthropoda_classes),
+        }
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=transport))
+    response = clb_path_children.list_path_children(["Animalia", "Arthropoda"], client=client)
+    assert response is not None
+    assert response.parent.taxon_id == "AR"
+    assert response.parent.rank == "phylum"
+    assert {child.canonical_name for child in response.children} == {
+        "Insecta",
+        "Arachnida",
+        "Crustacea",
+    }
+    assert all(child.rank == "class" for child in response.children)
+    # Subphylum tier is collapsed: the next hint skips subphylum
+    # entirely and lands on "order" (class → order in the cascade).
+    assert response.next_rank_hint == "order"
+
+
+def test_phylum_with_no_class_children_terminates_cascade() -> None:
+    """A fossil phylum with zero subphylum children AND zero class
+    children terminates the cascade cleanly: ``children=[]`` and
+    ``next_rank_hint=None``.
+
+    The collapse probe fires (subphylum empty), then the fallback
+    class query also returns empty. With both probes exhausted the
+    cascade has no further tier to render; ``None`` is the leaf
+    signal the cascade UI already understands as "stop, render
+    empty dropdown". The resolver does not loop or recurse.
+    """
+    transport = _transport(
+        {
+            ("GET", _search_path("Animalia", rank="kingdom")): _search_200(
+                [_row("N", "Animalia", "kingdom", parent_id="5T6MX")]
+            ),
+            ("GET", _search_path("Fossilida", rank="phylum")): _search_200(
+                [_row("FO", "Fossilida", "phylum", parent_id="N")]
+            ),
+            ("GET", _children_path("FO", rank="subphylum")): _children_200([]),
+            ("GET", _children_path("FO", rank="class")): _children_200([]),
+        }
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=transport))
+    response = clb_path_children.list_path_children(["Animalia", "Fossilida"], client=client)
+    assert response is not None
+    assert response.parent.taxon_id == "FO"
+    assert response.parent.rank == "phylum"
+    assert response.children == []
+    # Fossil clades with no surviving subphylum and no class children
+    # terminate the cascade; the UI renders an empty dropdown.
+    assert response.next_rank_hint is None
+
+
+def test_subphylum_with_class_children_does_not_collapse() -> None:
+    """When the resolver's parent IS a subphylum (not a phylum),
+    the collapse rule does NOT fire — the resolver returns the
+    subphylum's class children directly with
+    ``next_rank_hint="class"``.
+
+    The collapse rule only applies when the next-tier computation
+    lands on subphylum. For a subphylum parent, the next tier is
+    class, so the resolver issues one children query with
+    ``rank=class`` and emits ``next_rank_hint="class"`` (the
+    standard subphylum → class transition). This pins the
+    no-false-collapse contract for the subphylum tier.
+    """
+    vertebrata_classes = [
+        _row("MA", "Mammalia", "class", parent_id="VE"),
+        _row("RE", "Reptilia", "class", parent_id="VE"),
+    ]
+    transport = _transport(
+        {
+            ("GET", _search_path("Animalia", rank="kingdom")): _search_200(
+                [_row("N", "Animalia", "kingdom", parent_id="5T6MX")]
+            ),
+            ("GET", _search_path("Chordata", rank="phylum")): _search_200(
+                [_row("CH2", "Chordata", "phylum", parent_id="N")]
+            ),
+            ("GET", _search_path("Vertebrata", rank="subphylum")): _search_200(
+                [_row("VE", "Vertebrata", "subphylum", parent_id="CH2")]
+            ),
+            ("GET", _children_path("VE", rank="class")): _children_200(vertebrata_classes),
+        }
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=transport))
+    response = clb_path_children.list_path_children(
+        ["Animalia", "Chordata", "Vertebrata"], client=client
+    )
+    assert response is not None
+    assert response.parent.taxon_id == "VE"
+    assert response.parent.rank == "subphylum"
+    assert {child.canonical_name for child in response.children} == {"Mammalia", "Reptilia"}
+    assert all(child.rank == "class" for child in response.children)
+    assert response.next_rank_hint == "class"
