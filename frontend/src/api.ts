@@ -1,15 +1,26 @@
 /** Typed API client for the taxon backend.
 
-The client wraps the seven endpoints shipped in Sub-PRs 2A/2B/2C:
+The client wraps the seven endpoints shipped in Sub-PRs 2A/2B/2C
+plus the ChecklistBank-aware endpoints shipped in the
+``cascade-checklistbank`` chain:
 
-- ``GET /api/kingdoms``                                  — list kingdoms.
-- ``GET /api/{kingdom}/phyla``                          — list phyla.
+- ``GET /api/kingdoms``                                  — list cascade roots.
+  CLB returns the two top-tier taxa (``Biota``, ``Viruses``); the
+  UI renders a ``Biota`` dropdown that drives the kingdom choice.
+- ``GET /api/path-children?path=A|B|...``                 — children of the
+  deepest taxon the path resolves to, plus the next-rank hint. The
+  CLB resolver walks a 9-tier tuple (biota → kingdom → phylum →
+  subphylum → class → order → family → genus → species); subphylum
+  collapses when the parent phylum has zero subphylum children.
+- ``GET /api/species-list?path=...``                     — paginated species
+  under the deepest genus in the path.
+- ``GET /api/{kingdom}/phyla``                          — list phyla (legacy).
 - ``GET /api/{kingdom}/{phylum}/classes``                — list classes.
 - ``GET /api/{kingdom}/{phylum}/{class}/orders``         — list orders.
 - ``GET /api/{kingdom}/{phylum}/{class}/{order}/families`` — list families.
 - ``GET /api/{kingdom}/{phylum}/{class}/{order}/{family}/genera`` — list genera.
 - ``GET /api/{kingdom}/{phylum}/{class}/{order}/{family}/{genus}/species``
-                                                      — paginated species list.
+                                                       — paginated species list.
 - ``GET /api/{path}/{genus}/{epithet}``                  — species by breadcrumb.
 - ``GET /api/species/{genus}/{epithet}``                 — species by pair (may 409).
 - ``GET /api/{path}/{genus}/{epithet}/links``            — 12 dispatch URLs.
@@ -158,11 +169,23 @@ async function apiGet<T>(
 // High-level API methods
 // ---------------------------------------------------------------------------
 
-export async function fetchKingdoms(
+export async function fetchRoots(
   init?: { signal?: AbortSignal },
 ): Promise<ApiResult<TaxonResponse[]>> {
   return apiGet<TaxonResponse[]>("/kingdoms", init);
 }
+
+/**
+ * Deprecated alias for ``fetchRoots``.
+ *
+ * Keep the old name alive so external callers (and legacy tests)
+ * can still resolve ``/api/kingdoms`` through the typed client.
+ * The endpoint returns cascade roots (Biota + Viruses under
+ * ChecklistBank), not kingdom-rank taxa; the label "Kingdoms"
+ * is a historical artifact from the GBIF-backed resolver that
+ * pre-dated the CLB migration.
+ */
+export const fetchKingdoms = fetchRoots;
 
 export async function fetchChildren(
   parentSegments: string[],

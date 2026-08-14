@@ -20,6 +20,7 @@ import {
   fetchChildren,
   fetchKingdoms,
   fetchLinks,
+  fetchRoots,
   fetchSpecies,
   fetchSpeciesByPair,
   inclusionCsv,
@@ -67,6 +68,37 @@ describe("fetchKingdoms", () => {
     );
     const result = await fetchKingdoms();
     expect(result).toEqual({ status: "not-found", detail: "no kingdoms" });
+  });
+});
+
+describe("fetchRoots", () => {
+  it("returns ok with the roots list on 200", async () => {
+    const body = [
+      { id: 1, name: "Biota", display_name: "Biota [biota]" },
+      { id: 2, name: "Viruses", display_name: "Viruses [biota]" },
+    ];
+    mockFetchFetchOnce(mockFetchResponse({ status: 200, body }));
+    const result = await fetchRoots();
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data).toEqual(body);
+    }
+  });
+
+  it("returns not-found when the API returns 404", async () => {
+    mockFetchFetchOnce(
+      mockFetchResponse({ status: 404, body: { detail: "no roots" } }),
+    );
+    const result = await fetchRoots();
+    expect(result).toEqual({ status: "not-found", detail: "no roots" });
+  });
+
+  it("is the same implementation as the deprecated fetchKingdoms alias", async () => {
+    // The renamed client keeps the old name alive as a re-export
+    // so external callers (and legacy tests) resolve to the same
+    // function reference. Strict equality catches accidental
+    // re-bindings that would silently diverge the two entry points.
+    expect(fetchRoots).toBe(fetchKingdoms);
   });
 });
 

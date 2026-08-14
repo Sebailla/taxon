@@ -131,6 +131,23 @@ def _search_200(rows: list[dict[str, Any]]) -> httpx.Response:
     return httpx.Response(200, json={"offset": 0, "limit": 20, "total": len(rows), "result": rows})
 
 
+def _get_taxon_200(row: dict[str, Any]) -> httpx.Response:
+    """Build the JSON body for a successful ``/nameusage/{id}`` response.
+
+    CLB wraps the row's name + rank in a nested ``name`` object
+    on this endpoint. The test helper mirrors the real shape so
+    the resolver's ``_parse_taxon`` picks up the ``scientificName``
+    and ``rank`` from the nested location. Flat-shape rows
+    (e.g. ``/tree/{id}/children``) are passed through verbatim.
+    """
+    nested_name = {
+        "scientificName": row.get("name", ""),
+        "rank": row.get("rank", ""),
+    }
+    payload = {**row, "name": nested_name}
+    return httpx.Response(200, json=payload)
+
+
 # ---------------------------------------------------------------------------
 # Anatomy: the cascade tiers
 # ---------------------------------------------------------------------------
@@ -168,8 +185,14 @@ def test_root_path_returns_biota_children() -> None:
     its seven kingdoms in the children list with
     ``next_rank_hint = "kingdom"``.
 
-    The walk issues exactly one search (Biota at rank=biota) and
-    one get_children call (Biota's children at rank=kingdom).
+    The root tier ("Biota" or "Viruses") cannot be found via CLB's
+    ``/nameusage/search`` because the search endpoint returns HTTP
+    400 when filtered with ``rank=biota``. The resolver shortcuts
+    the root tier through the well-known root taxon ids
+    (Biota = ``"5T6MX"``, Viruses = ``"V"``) and uses
+    ``get_taxon`` directly. The walk therefore issues exactly one
+    ``/nameusage/5T6MX`` request and one
+    ``/tree/5T6MX/children?rank=kingdom`` request.
     """
     biota_row = _row("5T6MX", "Biota", "biota")
     kingdoms = [
@@ -183,7 +206,7 @@ def test_root_path_returns_biota_children() -> None:
     ]
     transport = _transport(
         {
-            ("GET", _search_path("Biota", rank="biota")): _search_200([biota_row]),
+            ("GET", "/dataset/COL2024/nameusage/5T6MX"): _get_taxon_200(biota_row),
             ("GET", _children_path("5T6MX", rank="kingdom")): _children_200(kingdoms),
         }
     )
@@ -201,6 +224,39 @@ def test_root_path_returns_biota_children() -> None:
         "Plantae",
         "Protozoa",
         "Chromista",
+    }
+    assert response.next_rank_hint == "kingdom"
+
+
+def test_root_path_returns_viruses_children() -> None:
+    """``list_path_children(["Viruses"])`` resolves the Viruses
+    root and returns its child realms with ``next_rank_hint = "kingdom"``.
+
+    The root-tier shortcut handles Viruses identically to Biota;
+    the resolver maps the case-insensitive name to the well-known
+    Viruses id (``"V"``). This is the second of the two top-tier
+    taxa CLB exposes; the cascade UI renders both in the
+    first-tier dropdown.
+    """
+    viruses_row = _row("V", "Viruses", "biota")
+    realms = [
+        _row("VR1", "Adenaviridae", "kingdom", parent_id="V"),
+        _row("VR2", "Riboviria", "kingdom", parent_id="V"),
+    ]
+    transport = _transport(
+        {
+            ("GET", "/dataset/COL2024/nameusage/V"): _get_taxon_200(viruses_row),
+            ("GET", _children_path("V", rank="kingdom")): _children_200(realms),
+        }
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=transport))
+    response = clb_path_children.list_path_children(["Viruses"], client=client)
+    assert response is not None
+    assert response.parent.taxon_id == "V"
+    assert response.parent.canonical_name == "Viruses"
+    assert {child.canonical_name for child in response.children} == {
+        "Adenaviridae",
+        "Riboviria",
     }
     assert response.next_rank_hint == "kingdom"
 
