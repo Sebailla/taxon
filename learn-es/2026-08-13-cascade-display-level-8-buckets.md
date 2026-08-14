@@ -17,14 +17,20 @@ The fix is a single source of truth — `taxonomy.py` — that maps every rank C
 ### `taxon/taxonomy.py` — the cascade contract
 
 ```python
-DISPLAY_LEVELS = ("realm", "kingdom", "phylum", "class", "order",
-                  "family", "genus", "species")
+DISPLAY_LEVELS = ("realm", "kingdom", "phylum", "class", "order", "family", "genus", "species")
 
 RANK_TO_DISPLAY_LEVEL: Final[dict[str, str]] = {
-    "domain": "realm", "superdomain": "realm", "subdomain": "realm",
-    "kingdom": "kingdom", "subkingdom": "kingdom",
-    "phylum": "phylum", "subphylum": "phylum", "infraphylum": "phylum",
-    "parvphylum": "phylum", "microphylum": "phylum", "megaclass": "phylum",
+    "domain": "realm",
+    "superdomain": "realm",
+    "subdomain": "realm",
+    "kingdom": "kingdom",
+    "subkingdom": "kingdom",
+    "phylum": "phylum",
+    "subphylum": "phylum",
+    "infraphylum": "phylum",
+    "parvphylum": "phylum",
+    "microphylum": "phylum",
+    "megaclass": "phylum",
     # ...etc — full mapping in the file...
 }
 ```
@@ -66,9 +72,7 @@ The `next_rank_hint` is now the modal `display_level` bucket (not the raw rank),
 ### `taxon/api/{col_import,import_data}.py` — populate at insert
 
 ```python
-rows_with_bucket = [
-    {**row, "display_level": display_level(row["rank"])} for row in rows
-]
+rows_with_bucket = [{**row, "display_level": display_level(row["rank"])} for row in rows]
 ```
 
 Both import paths (CoL DwC-A and WoRMS) populate the column in the insert batch. The migration for the existing 7.87M rows in the live DB is one SQL: `ALTER TABLE taxa ADD COLUMN display_level TEXT; UPDATE taxa SET display_level = CASE rank WHEN ... END`.
