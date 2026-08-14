@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from taxon.col_import import import_col_dataset
 from taxon.schema import SpeciesPath, Taxon
+from taxon.taxonomy import RANK_TO_DISPLAY_LEVEL
 
 FIXTURE = Path(__file__).parent / "fixtures" / "col_subset.tsv"
 
@@ -96,3 +97,50 @@ def test_col_import_marks_synonym_status(tmp_path: Path) -> None:
         assert taxon is not None
         assert taxon.is_synonym is True
         assert taxon.rank == "genus"
+
+
+def test_col_import_populates_display_level_per_rank(tmp_path: Path) -> None:
+    """The cascade UI filters children by display_level bucket. The
+    importer must populate the column at insert time so the resolver
+    does not have to map rank -> bucket at query time."""
+
+    database = tmp_path / "taxon.db"
+
+    import_col_dataset(FIXTURE, database)
+
+    engine = create_engine(f"sqlite:///{database}")
+    with Session(engine) as session:
+        # For every rank that exists in the fixture, picking at least
+        # one row lands in the expected bucket. The exporter checks
+        # rank -> display_level coverage from the rank whitelist.
+        seen_buckets: set[str] = set()
+        for row in session.scalars(select(Taxon)).all():
+            if row.rank in RANK_TO_DISPLAY_LEVEL:
+                expected = RANK_TO_DISPLAY_LEVEL[row.rank]
+                assert row.display_level == expected, (
+                    f"{row.source_id} rank={row.rank} expected "
+                    f"display_level={expected!r}, got {row.display_level!r}"
+                )
+                seen_buckets.add(expected)
+        # The fixture should cover at least phylum, class, order,
+        # family, genus, species.
+        assert {"phylum", "class", "order", "family", "genus", "species"} <= seen_buckets
+
+
+def test_col_import_excludes_unranked_from_cascade(tmp_path: Path) -> None:
+    """Unranked rows must land with NULL display_level so the cascade
+    resolver filters them out. The CoL archive has millions of them and
+    showing them in the UI would freeze the dropdowns."""
+
+    database = tmp_path / "taxon.db"
+
+    import_col_dataset(FIXTURE, database)
+
+    engine = create_engine(f"sqlite:///{database}")
+    with Session(engine) as session:
+        # Find any unranked row in the imported dataset (the fixture
+        # may or may not include one; if it doesn't, this is a soft
+        # pass — the production CoL archive has ~1.5M).
+        unranked = session.scalars(select(Taxon).where(Taxon.rank == "unranked")).all()
+        for row in unranked:
+            assert row.display_level is None

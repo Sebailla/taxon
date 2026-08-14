@@ -14,6 +14,10 @@ to CoL's TSV schema and unordered rows. Three-pass strategy:
    ``parent_source_id_by_child_source_id`` dict so the second
    pass can wire parents without re-streaming the file.
 
+   Each row also carries its ``display_level`` bucket (see
+   :mod:`taxon.taxonomy`) so the cascade UI can filter without
+   re-mapping every rank at query time.
+
 2. **Parent-wiring pass.** Single ``UPDATE taxa SET parent_id = ...``
    statement per distinct parent, batched across every child
    that points to it. The parent IDs come from a ``source_id →
@@ -51,6 +55,7 @@ from sqlalchemy import Engine, create_engine, event, insert, select, update
 from taxon.col_parser import parse_col_taxa
 from taxon.parser import ParsedTaxon
 from taxon.schema import Base, SpeciesPath, Taxon
+from taxon.taxonomy import display_level
 
 DEFAULT_SOURCE = Path(
     os.environ.get(
@@ -186,7 +191,18 @@ def _flush_taxon_batch(
     rows: list[dict[str, Any]],
     source_to_database_id: dict[str, int],
 ) -> None:
-    rows_with_null_parent = [{**row, "parent_id": None} for row in rows]
+    rows_with_null_parent = [
+        {
+            **row,
+            "parent_id": None,
+            # populate the cascade bucket at insert time so the
+            # resolver does not have to map rank -> bucket at query
+            # time. ``display_level`` is a pure function of the
+            # rank; ``None`` lands as ``NULL`` in the column.
+            "display_level": display_level(row["rank"]),
+        }
+        for row in rows
+    ]
     with engine.begin() as connection:
         connection.execute(insert(Taxon), rows_with_null_parent)
         source_ids = [row["source_id"] for row in rows_with_null_parent]
