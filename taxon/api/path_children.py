@@ -129,9 +129,7 @@ def list_path_children(
 
     next_rank_hint: str | None = None
     if child_rows:
-        bucket_counts = Counter(
-            RANK_TO_DISPLAY_LEVEL[child.rank.lower()] for child in child_rows
-        )
+        bucket_counts = Counter(RANK_TO_DISPLAY_LEVEL[child.rank.lower()] for child in child_rows)
         next_rank_hint = bucket_counts.most_common(1)[0][0]
 
     return PathChildrenResponse(

@@ -141,8 +141,6 @@ def test_col_import_excludes_unranked_from_cascade(tmp_path: Path) -> None:
         # Find any unranked row in the imported dataset (the fixture
         # may or may not include one; if it doesn't, this is a soft
         # pass — the production CoL archive has ~1.5M).
-        unranked = session.scalars(
-            select(Taxon).where(Taxon.rank == "unranked")
-        ).all()
+        unranked = session.scalars(select(Taxon).where(Taxon.rank == "unranked")).all()
         for row in unranked:
             assert row.display_level is None

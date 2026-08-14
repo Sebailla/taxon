@@ -100,9 +100,7 @@ def _insert_taxon_batch(
     rows: list[dict[str, Any]],
     source_to_database_id: dict[str, int],
 ) -> None:
-    rows_with_bucket = [
-        {**row, "display_level": display_level(row["rank"])} for row in rows
-    ]
+    rows_with_bucket = [{**row, "display_level": display_level(row["rank"])} for row in rows]
     with engine.begin() as connection:
         connection.execute(insert(Taxon), rows_with_bucket)
         source_ids = [row["source_id"] for row in rows_with_bucket]

@@ -413,9 +413,7 @@ def test_path_children_excludes_historical_ranks(seeded_app: FastAPI) -> None:
     assert "Natio alpina" not in names
 
 
-def test_next_rank_hint_is_a_cascade_bucket_not_a_raw_rank(
-    seeded_app: FastAPI
-) -> None:
+def test_next_rank_hint_is_a_cascade_bucket_not_a_raw_rank(seeded_app: FastAPI) -> None:
     """The frontend renders the next dropdown label from the
     display_level bucket, not the child's raw rank. This is what
     lets the cascade UI keep ``class Rank Name`` as the dropdown
