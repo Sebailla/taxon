@@ -50,14 +50,13 @@ from sqlalchemy.orm import Session
 
 from taxon.api.db import get_db
 from taxon.api.errors import AmbiguousError, NotFoundError
+from taxon.api.gbif_path_children import list_path_children as gbif_list_path_children
 from taxon.api.hierarchy import (
     PATH_RANKS,
     TaxonRow,
     list_children,
-    list_root_taxa,
     resolve_path,
 )
-from taxon.api.path_children import list_path_children
 from taxon.api.schemas import (
     LinksResponse,
     MarkerFlags,
@@ -74,7 +73,7 @@ from taxon.api.species import (
     list_species_page,
     parse_include,
 )
-from taxon.api.species_list import list_species_at_path
+from taxon.gbif import GbifClient, GbifTaxon
 from taxon.schema import Taxon
 from taxon.search_links import SearchLink, build_search_links, load_templates
 
@@ -119,30 +118,29 @@ def path_children(
         Query(
             description=(
                 "Pipe-separated path of canonical names. The endpoint "
-                "walks the segments case-insensitively against the "
-                "taxon tree and returns the direct children of the "
-                "deepest resolved taxon, regardless of rank name. "
-                "Example: ?path=Animalia%7CChordata%7CVertebrata"
+                "walks the segments against the GBIF backbone and returns "
+                "the direct children of the deepest resolved taxon. "
+                "GBIF's 6-tier taxonomy (kingdom -> phylum -> order -> family "
+                "-> genus -> species) collapses the 40+ intermediate ranks "
+                "CoL exposes, so each cascade dropdown maps to exactly one "
+                "tier. Example: ?path=Animalia%7CChordata%7CGnathostomata"
             ),
             min_length=1,
         ),
     ],
-    session: Annotated[Session, Depends(get_db)],
+    gbif: Annotated[GbifClient, Depends(_get_gbif_client)],
 ) -> PathChildrenEnvelope:
     """Return the children of the deepest taxon the path resolves to.
 
-    The endpoint replaces the six rank-named cascade endpoints
-    (``/api/{kingdom}/phyla``, ``/api/.../{phylum}/classes``,
-    etc.) with a single resolver that does not assume any rank
-    order. It exists so the cascade UI can follow CoL's
-    intermediate ranks (subphylum, gigaclass, infraclass, ...).
-
-    The deep rank-named endpoints remain available and unchanged
-    for backward compatibility; their cleanup lands in a
-    follow-up PR.
+    The resolver walks the path against the GBIF backbone and returns
+    the direct children of the deepest resolved taxon. GBIF orders
+    results by acceptance + name match, so the first hit is the
+    accepted canonical taxon. The endpoint replaces the previous
+    CoL-backed resolver with a single source of truth that does
+    not require maintaining a local SQLite mirror.
     """
     segments = [segment for segment in path.split("|") if segment]
-    response = list_path_children(session, segments)
+    response = gbif_list_path_children(segments, client=gbif)
     if response is None:
         raise NotFoundError(f"taxon not found: {segments[-1]!r}")
     return PathChildrenEnvelope(
@@ -162,27 +160,17 @@ def species_list(
         Query(
             description=(
                 "Pipe-separated path of canonical names. The endpoint "
-                "walks the segments case-insensitively (same contract as "
-                "/api/path-children) and returns the species-rank children "
-                "of the deepest resolved taxon, paginated. Example: "
-                "?path=Animalia%7CChordata%7CVertebrata%7CGnathostomata%7C"
-                "Osteichthyes%7CActinopterygii%7CActinopteri%7CTeleostei%7C"
-                "Gadiformes%7CGadoidei%7CGadidae%7CGadus"
+                "walks the segments against GBIF and returns the species "
+                "children of the deepest resolved taxon. The deepest "
+                "segment must be a genus; the resolver walks up the path "
+                "to find its GBIF key, then asks /species/{key}/children. "
+                "Example: ?path=Animalia%7CChordata%7CActinopterygii%7C"
+                "Cyprinodontiformes%7CGoodeidae%7CGirardinichthys"
             ),
             min_length=1,
         ),
     ],
-    session: Annotated[Session, Depends(get_db)],
-    include: Annotated[
-        str | None,
-        Query(
-            description=(
-                "Comma-separated inclusion classes "
-                "(synonyms, extinct, uncertain, unassigned). "
-                "Default is accepted-only."
-            )
-        ),
-    ] = None,
+    gbif: Annotated[GbifClient, Depends(_get_gbif_client)],
     cursor: Annotated[
         str | None,
         Query(description="Pagination cursor returned in next_cursor."),
@@ -190,30 +178,90 @@ def species_list(
 ) -> SpeciesListResponse:
     """Return the species list at the deepest taxon the path resolves to.
 
-    The legacy six-fixed-rank endpoint
-    (``/api/{kingdom}/{phylum}/{class}/{order}/{family}/{genus}/species``)
-    cannot serve CoL paths that contain intermediate ranks
-    (subphylum, gigaclass, ...). This path-aware endpoint accepts
-    any chain length and returns the species children of the
-    deepest resolved taxon.
+    The path-aware resolver walks the segments and asks GBIF for the
+    children of the deepest matched taxon. The cascade UI consumes
+    this once the user picks a genus — the species list fills the
+    leaf panel without further interaction.
     """
     segments = [segment for segment in path.split("|") if segment]
-    items, next_cursor, error_detail = list_species_at_path(
-        session,
-        segments,
-        include=include,
-        cursor=cursor,
+    path_response = gbif_list_path_children(segments, client=gbif)
+    if path_response is None:
+        raise NotFoundError(f"taxon not found: {segments[-1]!r}")
+    children = gbif.get_children(
+        path_response.parent.id,
+        limit=300,
+        rank="SPECIES",
     )
-    if items is None:
-        raise NotFoundError(error_detail or "taxon not found")
-    return SpeciesListResponse(items=items, next_cursor=next_cursor)
+    items = [
+        SpeciesListItem(
+            id=child.key,
+            name=child.canonical_name,
+            display_name=child.scientific_name,
+            rank=child.rank.lower(),
+            parent_id=child.parent_key,
+            parent_segments=segments,
+        )
+        for child in children
+    ]
+    return SpeciesListResponse(items=items, next_cursor=None)
 
 
 @router.get("/kingdoms", response_model=list[TaxonResponse])
-def list_kingdoms(session: Annotated[Session, Depends(get_db)]) -> list[TaxonResponse]:
-    """Return every Kingdom-rank taxon sorted by canonical ``name``."""
-    rows: list[TaxonRow] = list_root_taxa(session)
-    return [TaxonResponse.model_validate(row) for row in rows]
+def list_kingdoms(
+    gbif: Annotated[GbifClient, Depends(_get_gbif_client)],
+) -> list[TaxonResponse]:
+    """Return every Kingdom-rank taxon from GBIF.
+
+    GBIF exposes 8 canonical kingdoms plus the virus realms, but
+    each one is duplicated across dozens of dataset-specific
+    keys. The endpoint deduplicates by ``nub_key`` (the canonical
+    backbone key) so the cascade dropdown shows one row per
+    kingdom, not one per dataset.
+    """
+    rows = gbif.search(name="", rank="KINGDOM", accepted_only=True, limit=100)
+    kingdoms = [row for row in rows if row.rank == "KINGDOM"]
+    # Deduplicate by nub_key so the UI shows one row per kingdom.
+    seen: set[int] = set()
+    deduped: list[GbifTaxon] = []
+    for kingdom in kingdoms:
+        if kingdom.nub_key in seen:
+            continue
+        seen.add(kingdom.nub_key)
+        deduped.append(kingdom)
+    # Sort by canonical name for a deterministic dropdown.
+    deduped.sort(key=lambda k: k.canonical_name.lower())
+    return [TaxonResponse.model_validate(_gbif_row_to_taxon_row(k)) for k in deduped]
+
+
+def _get_gbif_client() -> GbifClient:
+    """FastAPI dependency that yields the request-scoped GBIF client.
+
+    The router takes a fresh client per request so tests can
+    override the dependency and inject a transport-stubbed
+    client. Production callers get a default :class:`GbifClient`
+    that hits the public GBIF API directly.
+    """
+    return GbifClient()
+
+
+def _gbif_row_to_taxon_row(gbif_row: GbifTaxon) -> TaxonRow:
+    """Bridge a :class:`GbifTaxon` to the legacy :class:`TaxonRow`.
+
+    The cascade UI consumes :class:`TaxonRow`; the bridge
+    translates GBIF rows so the frontend does not need to
+    change when the data source changes.
+    """
+    return TaxonRow(
+        id=gbif_row.key,
+        name=gbif_row.canonical_name,
+        rank=gbif_row.rank.lower(),
+        parent_id=gbif_row.parent_key,
+        display_name=gbif_row.scientific_name,
+        is_synonym=False,
+        is_extinct=False,
+        is_uncertain=False,
+        is_unassigned=False,
+    )
 
 
 def _resolve_or_404(session: Session, segments: list[str]) -> TaxonRow:
