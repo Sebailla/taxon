@@ -227,6 +227,13 @@ def import_indented_dataset(
                 continue
             del depth_stack[depth:]
             parent_source_id = depth_stack[-1] if depth_stack else None
+            # Derive taxonomic flags from the leading marker of the
+            # name. The CLB / GBIF indented-tree format carries these
+            # signals in the column itself rather than as metadata,
+            # so we read them once here and let the cascade UI filter
+            # by them later.
+            is_synonym = name.startswith("=")
+            is_extinct = name.startswith("\u2020")
             batch.append(
                 {
                     "source_id": source_id,
@@ -235,6 +242,8 @@ def import_indented_dataset(
                     "rank": rank.lower(),
                     "display_name": name,
                     "display_level": None,
+                    "is_synonym": is_synonym,
+                    "is_extinct": is_extinct,
                 }
             )
             # Park the parent linkage for the second pass so the
