@@ -29,7 +29,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Cascade } from "../src/components/Cascade";
+import { Cascade, PATH_CHANGE_EVENT } from "../src/components/Cascade";
 import type { TaxonResponse } from "../src/api";
 import { waitForEnabledOption } from "./test-helpers";
 
@@ -807,5 +807,153 @@ describe("Cascade — always 7 fixed dropdowns", () => {
       "Curculionidae",
       "Sitophilus",
     ]);
+  });
+});
+
+describe("Cascade — path:change dispatch (Task 4.5)", () => {
+  it("dispatches the event with the picked trail when only ONE root pick is committed", async () => {
+    // The contract is simpler to verify in isolation: a single
+    // successful pick must produce a path:change event whose
+    // detail.path is the picked trail. No cascade walks — just
+    // the dispatch hook.
+    const pathChangeListener = vi.fn();
+    window.addEventListener(PATH_CHANGE_EVENT, pathChangeListener);
+
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockFetchJson([
+            taxon(1, "Biota", "biota"),
+            taxon(2, "Viruses", "biota"),
+          ]),
+        );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const user = userEvent.setup();
+      render(<Cascade />);
+
+      // Wait for Biota to be enabled, then pick it.
+      await user.selectOptions(
+        await waitForEnabledOption("Biota", "Biota"),
+        "Biota",
+      );
+
+      const pathEvents = pathChangeListener.mock.calls
+        .map((call) => call[0])
+        .filter(
+          (evt): evt is CustomEvent<{ path: string[] }> =>
+            evt instanceof CustomEvent && evt.type === PATH_CHANGE_EVENT,
+        );
+      const biotaDispatches = pathEvents.filter(
+        (evt) =>
+          evt.detail.path.length === 1 && evt.detail.path[0] === "Biota",
+      );
+      expect(biotaDispatches.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      window.removeEventListener(PATH_CHANGE_EVENT, pathChangeListener);
+    }
+  });
+
+  it("does NOT dispatch path:change on every render — only when path changes", async () => {
+    // Regression guard: the dispatch hook is keyed by state.path,
+    // so re-renders that do not change the path MUST NOT emit a
+    // new event. Without this guard the App's panel would refetch
+    // on every render and the AbortController would thrash.
+    const pathChangeListener = vi.fn();
+    window.addEventListener(PATH_CHANGE_EVENT, pathChangeListener);
+
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockFetchJson([
+            taxon(1, "Biota", "biota"),
+            taxon(2, "Viruses", "biota"),
+          ]),
+        );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      render(<Cascade />);
+
+      // Allow microtasks to flush; the initial mount fires ONE
+      // dispatch with path=[].
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      // Force a re-render without changing the path by toggling
+      // an unrelated prop. The easiest unrelated prop is the
+      // inclusion toggle (Toggles re-renders the cascade but does
+      // not change state.path).
+      // The Toggles component is the only thing below the cascade
+      // that re-renders without touching the path.
+      const toggles = screen.getByRole("group", {
+        name: /include in species list/i,
+      });
+      // Toggle is a button — click it. The cascade re-renders but
+      // state.path stays the same, so the dispatch must not refire.
+      const firstButton = toggles.querySelector("button");
+      expect(firstButton).not.toBeNull();
+      // Count events before the re-render.
+      const beforeCount = pathChangeListener.mock.calls.filter(
+        (call) =>
+          (call[0] as CustomEvent).type === PATH_CHANGE_EVENT,
+      ).length;
+      firstButton?.click();
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      const afterCount = pathChangeListener.mock.calls.filter(
+        (call) =>
+          (call[0] as CustomEvent).type === PATH_CHANGE_EVENT,
+      ).length;
+      // No new dispatch for an unrelated re-render.
+      expect(afterCount).toBe(beforeCount);
+    } finally {
+      window.removeEventListener(PATH_CHANGE_EVENT, pathChangeListener);
+    }
+  });
+});
+
+describe("Cascade — path:change dispatch (standalone)", () => {
+  it("dispatches the event with the picked trail when only ONE root pick is committed", async () => {
+    // The contract is simpler to verify in isolation: a single
+    // successful pick must produce a path:change event whose
+    // detail.path is the picked trail. No other listeners, no
+    // cascade walks — just the dispatch hook.
+    const pathChangeListener = vi.fn();
+    window.addEventListener(PATH_CHANGE_EVENT, pathChangeListener);
+
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockFetchJson([
+            taxon(1, "Biota", "biota"),
+            taxon(2, "Viruses", "biota"),
+          ]),
+        );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const user = userEvent.setup();
+      render(<Cascade />);
+
+      // Wait for Biota to be enabled, then pick it.
+      await user.selectOptions(
+        await waitForEnabledOption("Biota", "Biota"),
+        "Biota",
+      );
+
+      const pathEvents = pathChangeListener.mock.calls
+        .map((call) => call[0])
+        .filter(
+          (evt): evt is CustomEvent<{ path: string[] }> =>
+            evt instanceof CustomEvent && evt.type === PATH_CHANGE_EVENT,
+        );
+      const biotaDispatches = pathEvents.filter(
+        (evt) =>
+          evt.detail.path.length === 1 && evt.detail.path[0] === "Biota",
+      );
+      expect(biotaDispatches.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      window.removeEventListener(PATH_CHANGE_EVENT, pathChangeListener);
+    }
   });
 });
