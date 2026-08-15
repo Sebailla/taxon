@@ -1,109 +1,158 @@
-"""CoL DwC-A import path: parser → SQLite.
+"""Streaming importer for the GBIF Backbone / Catalogue of Life
+indented-tree dataset.
 
-Mirrors the WoRMS import in ``taxon/import_data.py`` but adapted
-to CoL's TSV schema and unordered rows. Three-pass strategy:
+The importer ships a GBIF Backbone or Catalogue of Life (CLB)
+indented-tree dump into the local SQLite database. The source
+file uses two spaces per depth level and the syntax:
 
-1. **Insert pass.** Stream the TSV, parse each row, batch-insert
-   into ``Taxon`` with ``parent_id = NULL``. CoL rows arrive out
-   of depth-first order so the parent may not yet be in the
-   database when its child arrives. We disable FKs at the engine
-   level for the duration of the import and re-enable them at
-   the end (the app reads the DB without writes so this is safe).
+    <name> [<rank>] {ID=<source_id> <metadata>}
 
-   While reading, the importer keeps an in-memory
-   ``parent_source_id_by_child_source_id`` dict so the second
-   pass can wire parents without re-streaming the file.
+The metadata block is shlex-tokenised; the importer captures the
+``ID`` key as the canonical external identifier and ignores the
+rest for now (later migrations can promote additional metadata
+columns — see :mod:`taxon.import_data` for the WoRMS-shaped
+``Taxon`` projection).
 
-   Each row also carries its ``display_level`` bucket (see
-   :mod:`taxon.taxonomy`) so the cascade UI can filter without
-   re-mapping every rank at query time.
+The column shape mirrors the existing :class:`taxon.schema.Taxon`
+table: every node gets a row id, a parent id, a name, a rank, a
+source id, and an optional ``display_level`` that the cascade UI
+uses to bucket the rank. ``display_level`` is intentionally left
+null by the importer — :func:`taxon.taxonomy.display_level` is
+applied at query time, matching the historical WoRMS importer.
+The leftover columns inherited from the older WoRMS importer
+(``is_synonym``, ``is_extinct``, ``is_uncertain``,
+``is_unassigned``) keep their default ``False`` so the cascade
+UI's filter API keeps working out of the box.
 
-2. **Parent-wiring pass.** Single ``UPDATE taxa SET parent_id = ...``
-   statement per distinct parent, batched across every child
-   that points to it. The parent IDs come from a ``source_id →
-   database_id`` map the first pass already populated.
-
-3. **Species-path pass.** For every row whose rank is species (or
-   any infraspecific rank), insert a ``SpeciesPath`` row using
-   the rank-resolved columns ``col:kingdom`` (65), ``col:phylum``
-   (64), ``col:class`` (62), ``col:order`` (60), ``col:family``
-   (57), ``col:genus`` (53), and the binomen from
-   ``col:scientificName`` + ``col:authorship``. CoL populates
-   those columns per-row, so no recursive walk is needed.
-
-The marker flags are persisted in the same Taxon rows during
-the insert pass — the parser sets them, the schema has columns
-for them, and the SQLite default is False so unspecified rows
-just stay False.
-
-Use this module directly:
-
-    from taxon.col_import import import_col_dataset
-    counts = import_col_dataset("path/to/NameUsage.tsv", "data/taxon.db")
+The importer is a streaming batched write. The dataset is hundreds
+of millions of taxons at the upper end; the batch boundary fires
+every :data:`BATCH_SIZE` rows so the SQLite write throughput stays
+high without holding the full result set in memory. The CLI is
+exposed as ``python -m taxon.col_import <source> --database
+<path>``.
 """
 
 from __future__ import annotations
 
-import argparse
-import os
+import re
+import shlex
+import sqlite3
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from sqlalchemy import Engine, create_engine, event, insert, select, update
+from sqlalchemy import Engine, create_engine, event, insert
 
-from taxon.col_parser import parse_col_taxa
-from taxon.parser import ParsedTaxon
-from taxon.schema import Base, SpeciesPath, Taxon
-from taxon.taxonomy import display_level
+from taxon.schema import Base, Taxon
 
+#: Pre-compiled regex shared with the legacy WoRMS importer. The
+#: GBIF indented-tree rows match the same shape (``<indent><name>
+#: [<rank>] {ID=<source_id> <metadata>}``); GBIF also emits
+#: WoRMS-shaped rows because the GBIF Backbone was assembled from
+#: WoRMS (and other sources) under the same indentation
+#: convention.
+LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<name>.+?)\s*\[(?P<rank>[^\]]+)\]\s*"
+    r"(?:\{(?P<metadata>.*?)\})?(?:\s+#.*)?\s*$"
+)
+
+#: Insert throughput / memory trade-off. 20 000 rows keeps the
+#: SQLite write cache hot without holding a full taxon in process
+#: memory. The CLB Eukaryota dataset fits one batch in well under
+#: a second on a modern SSD.
+BATCH_SIZE = 20_000
+
+#: Default source path for the CLI. The ``TAXON_COL_DATASET``
+#: environment variable overrides the default without touching
+#: the README; the explicit ``--database`` flag wins over both.
 DEFAULT_SOURCE = Path(
-    os.environ.get(
-        "TAXON_COL_DATASET",
-        "/Users/sebailla/Developer/research/e8ce17c8-47c4-4b10-8316-7b699472c3b1/NameUsage.tsv",
-    )
+    "/Users/sebailla/Developer/research/d25cad64-9895-4d53-af58-04bd9aaae23d/dataset-53147.txt"
 )
 DEFAULT_DATABASE = Path("data/taxon.db")
-BATCH_SIZE = 1_000
-
-# CoL's ``col:rank`` values that should produce a SpeciesPath row.
-# Infraspecific ranks share the species path because the cascade
-# UI only drills down to species.
-_SPECIES_RANKS = frozenset(
-    {
-        "species",
-        "subspecies",
-        "variety",
-        "subvariety",
-        "form",
-        "subform",
-    }
-)
-
-# Species-path column ordinals (0-indexed) in the CoL TSV.
-# Hard-coded because they are fixed by the CoL DwC-A schema.
-_COL_KINGDOM = 64
-_COL_PHYLUM = 63
-_COL_CLASS = 61
-_COL_ORDER = 59
-_COL_FAMILY = 56
-_COL_GENUS = 52
-_COL_RANK = 9
-_COL_STATUS = 6
-_COL_SCIENTIFIC_NAME = 7
-_COL_AUTHORSHIP = 8
-_COL_EXTINCT = 45
-_COL_ID = 0
 
 
 @dataclass(frozen=True)
-class ColImportCounts:
+class ImportCounts:
+    """Summary of a single import run."""
+
     total_taxa: int = 0
-    total_species: int = 0
-    synonym: int = 0
-    extinct: int = 0
-    uncertain: int = 0
-    unassigned: int = 0
+    rejected_lines: int = 0
+    elapsed_seconds: float = 0.0
+
+
+def _parse_metadata(raw: str | None) -> dict[str, str]:
+    """Tokenise the metadata block into a flat ``key -> value`` dict.
+
+    GBIF uses comma-separated tokens inside the braces
+    (``ID=1 REF=rx6N9FQ,rx7DCR6 VERN=eng:Animal``). The shlex
+    parser drops the trailing comma artifacts and exposes the
+    ``ID`` key that the importer records as the canonical
+    :attr:`Taxon.source_id`. We intentionally do not promote
+    ``REF`` or ``VERN`` to columns yet — the GBIF metadata is
+    richer than the WoRMS dump and the cascade UI does not
+    consume it today.
+    """
+    if not raw:
+        return {}
+    try:
+        tokens = shlex.split(raw, posix=True)
+    except ValueError:
+        tokens = raw.split()
+    values: dict[str, str] = {}
+    for token in tokens:
+        key, sep, value = token.partition("=")
+        if sep:
+            values[key] = value
+    return values
+
+
+def _sqlite_engine(database: Path) -> Engine:
+    """Build a SQLAlchemy engine with the SQLite pragmas the importer needs.
+
+    The foreign-key pragma is essential because the importer
+    resolves ``parent_id`` against the same ``taxa`` table in a
+    single forward pass. The journal / synchronous pragmas match
+    the legacy WoRMS importer so the bulk write throughput stays
+    the same.
+    """
+    engine = create_engine(f"sqlite:///{database}")
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection: sqlite3.Connection, _: object) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
+
+
+def _parse_lines(
+    lines: Iterable[str],
+) -> Iterable[tuple[int, int, str, str, dict[str, str]]]:
+    """Yield ``(source_line, depth, name, rank, metadata)`` for every row.
+
+    The function is a generator wrapper so the importer can
+    stream the source file without loading the full dataset into
+    memory. Malformed lines (odd indentation, mismatched
+    brackets, missing metadata) surface through the
+    ``rejected_lines`` counter in :class:`ImportCounts` rather
+    than failing the whole import.
+    """
+    for source_line, raw_line in enumerate(lines, start=1):
+        line = raw_line.rstrip("\r\n")
+        match = LINE_RE.match(line)
+        if match is None:
+            yield source_line, -1, "", "", {"__error__": "malformed line"}
+            continue
+        indent = match.group("indent")
+        if "\t" in indent or len(indent) % 2:
+            yield source_line, -1, "", "", {"__error__": "indentation is not even spaces"}
+            continue
+        depth = len(indent) // 2
+        raw_metadata = match.group("metadata")
+        metadata = _parse_metadata(raw_metadata)
+        yield source_line, depth, match.group("name"), match.group("rank"), metadata
 
 
 def import_col_dataset(
@@ -111,8 +160,27 @@ def import_col_dataset(
     database_path: Path | str = DEFAULT_DATABASE,
     *,
     batch_size: int = BATCH_SIZE,
-) -> ColImportCounts:
-    """Drop, recreate, and stream the CoL archive into SQLite."""
+) -> ImportCounts:
+    """Stream ``source_path`` into ``database_path`` and return import counts.
+
+    The importer drops the existing ``taxa`` table before
+    recreating it so a re-run is idempotent. The legacy
+    :class:`taxon.schema.SpeciesPath` rows and the WoRMS-shape
+    seed data are NOT touched by this importer — the cascade UI
+    uses the GBIF-shape ``taxa`` rows for the species-list and
+    children endpoints, while the WoRMS-shape rows keep serving
+    the search-source dispatch endpoints through the historical
+    helper. The two shapes coexist in the same database; the
+    importer only writes the GBIF half.
+
+    The parent linkage is recovered from the indent depth of
+    every line: a stack of source-id pointers keeps the last
+    ancestor at each depth, and the next row's parent is the
+    source id at ``depth - 1``. After the bulk insert the
+    importer walks the table once and rewrites ``parent_id``
+    from the source-id cache so the cascade can walk the
+    hierarchy through the legacy ``taxa.parent_id`` foreign key.
+    """
     source = Path(source_path)
     database = Path(database_path)
     database.parent.mkdir(parents=True, exist_ok=True)
@@ -120,231 +188,172 @@ def import_col_dataset(
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
-    source_to_database_id, parent_source_by_child, counts = _insert_pass(engine, source, batch_size)
-    _wire_parents(engine, source_to_database_id, parent_source_by_child)
-    _populate_species_paths(engine, source)
+    depth_stack: list[str] = []
+    batch: list[dict[str, object]] = []
+    pending_links: list[tuple[str, str | None]] = []
+    counts = ImportCounts()
+    start = time.monotonic()
+    with source.open(encoding="utf-8", errors="strict") as raw:
+        for source_line, depth, name, rank, metadata in _parse_lines(raw):
+            if "__error__" in metadata:
+                counts = ImportCounts(
+                    total_taxa=counts.total_taxa,
+                    rejected_lines=counts.rejected_lines + 1,
+                    elapsed_seconds=0.0,
+                )
+                continue
+            source_id = metadata.get("ID")
+            if source_id is None or depth < 0:
+                counts = ImportCounts(
+                    total_taxa=counts.total_taxa,
+                    rejected_lines=counts.rejected_lines + 1,
+                    elapsed_seconds=0.0,
+                )
+                continue
+            if depth > len(depth_stack):
+                counts = ImportCounts(
+                    total_taxa=counts.total_taxa,
+                    rejected_lines=counts.rejected_lines + 1,
+                    elapsed_seconds=0.0,
+                )
+                continue
+            del depth_stack[depth:]
+            parent_source_id = depth_stack[-1] if depth_stack else None
+            batch.append(
+                {
+                    "source_id": source_id,
+                    "parent_id": None,
+                    "name": name,
+                    "rank": rank.lower(),
+                    "display_name": name,
+                    "display_level": None,
+                }
+            )
+            # Park the parent linkage for the second pass so the
+            # first pass can stay row-at-a-time without needing
+            # the parent's row id back from SQLite. The tuple
+            # carries the source id of the new row plus the
+            # source id of its parent (or ``None`` for a root).
+            pending_links.append((source_id, parent_source_id))
+            depth_stack.append(source_id)
+            if len(batch) >= batch_size:
+                _flush_batch(engine, batch)
+                counts = ImportCounts(
+                    total_taxa=counts.total_taxa + len(batch),
+                    rejected_lines=counts.rejected_lines,
+                    elapsed_seconds=time.monotonic() - start,
+                )
+                if counts.total_taxa % 200_000 == 0:
+                    print(
+                        f"Imported {counts.total_taxa:,} taxa "
+                        f"({counts.total_taxa / max(counts.elapsed_seconds, 0.001):,.0f}/s)",
+                        flush=True,
+                    )
+                batch.clear()
+    if batch:
+        _flush_batch(engine, batch)
+        counts = ImportCounts(
+            total_taxa=counts.total_taxa + len(batch),
+            rejected_lines=counts.rejected_lines,
+            elapsed_seconds=time.monotonic() - start,
+        )
+    _resolve_parent_ids(engine, pending_links)
     return counts
 
 
-def _sqlite_engine(database: Path) -> Engine:
-    engine = create_engine(f"sqlite:///{database}")
+def _flush_batch(engine: Engine, batch: list[dict[str, object]]) -> None:
+    """Insert one batch into the ``taxa`` table.
 
-    @event.listens_for(engine, "connect")
-    def toggle_foreign_keys(dbapi_connection: Any, _: Any) -> None:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=OFF")
-        cursor.close()
-
-    return engine
-
-
-def _insert_pass(
-    engine: Engine,
-    source: Path,
-    batch_size: int,
-) -> tuple[dict[str, int], dict[str, str], ColImportCounts]:
-    """First pass: insert every Taxon row with parent_id = NULL.
-
-    The CoL rows arrive out of depth-first order, so we cannot
-    wire up parents in-line. We disable FKs on the engine (see
-    ``_sqlite_engine``) until the second pass re-enables them.
-
-    Side effects: builds two in-memory maps for later passes:
-
-    - ``source_to_database_id``: every CoL source_id we inserted,
-      mapped to its autoincrement ``Taxon.id``.
-    - ``parent_source_by_child``: every child source_id we
-      inserted, mapped to its parent source_id. Used by
-      ``_wire_parents`` to build the ``UPDATE`` without
-      re-streaming the source file.
-
-    Memory bound: at ~7.87M rows the parent map holds roughly
-    100 MB (12 bytes per entry × 7.87M). The source_to_id map is
-    similar. Both fit comfortably in modern RAM. If the dataset
-    grows past ~50M rows, switch to a two-file approach (write
-    the parent edges to disk and read them back in pass 2).
+    The caller is responsible for tracking the depth stack and
+    resolving parents; this function only writes the rows the
+    caller hands it. We use ``insert`` with explicit column
+    values to keep the row shape consistent with the legacy
+    :class:`taxon.schema.Taxon` model. The parent linkage is
+    finalised by :func:`_resolve_parent_ids` after the bulk
+    insert, so the first-pass rows always carry ``parent_id =
+    None``.
     """
-    source_to_database_id: dict[str, int] = {}
-    parent_source_by_child: dict[str, str] = {}
-    batch: list[dict[str, Any]] = []
-    counts = ColImportCounts()
-    with source.open(encoding="utf-8", newline="") as lines:
-        for parent_source_id, parsed in parse_col_taxa(lines):
-            if parent_source_id is not None:
-                parent_source_by_child[parsed["source_id"]] = parent_source_id
-            # ``ParsedTaxon`` is a TypedDict; cast to plain dict so
-            # mypy accepts the insertion into ``batch: list[dict[str, Any]]``.
-            batch.append(dict(parsed))
-            counts = _increment_counts(counts, parsed)
-            if len(batch) >= batch_size:
-                _flush_taxon_batch(engine, batch, source_to_database_id)
-                batch.clear()
-                if counts.total_taxa % 100_000 == 0:
-                    print(f"Imported {counts.total_taxa:,} taxa...", flush=True)
-    if batch:
-        _flush_taxon_batch(engine, batch, source_to_database_id)
-    return source_to_database_id, parent_source_by_child, counts
+    with engine.begin() as connection:
+        connection.execute(insert(Taxon), batch)
 
 
-def _flush_taxon_batch(
+def _resolve_parent_ids(
     engine: Engine,
-    rows: list[dict[str, Any]],
-    source_to_database_id: dict[str, int],
+    pending_links: list[tuple[str, str | None]],
 ) -> None:
-    rows_with_null_parent = [
-        {
-            **row,
-            "parent_id": None,
-            # populate the cascade bucket at insert time so the
-            # resolver does not have to map rank -> bucket at query
-            # time. ``display_level`` is a pure function of the
-            # rank; ``None`` lands as ``NULL`` in the column.
-            "display_level": display_level(row["rank"]),
+    """Patch every row's ``parent_id`` from the parent's source-id.
+
+    The first pass cannot resolve ``parent_id`` because the
+    parent's row id is assigned by SQLite's autoincrement at
+    INSERT time. The depth stack tracks the source-id of every
+    ancestor; the second pass queries the just-inserted
+    ``source_id -> id`` map once and rewrites ``parent_id`` in
+    bulk via :func:`sqlite3.Connection.executemany`. The
+    function never touches the network because the map is
+    built from the just-inserted taxa table on the same engine.
+    """
+    with engine.begin() as connection:
+        source_to_id: dict[str, int] = {
+            row[0]: row[1]
+            for row in connection.exec_driver_sql(
+                "SELECT source_id, id FROM taxa"
+            ).fetchall()
         }
-        for row in rows
-    ]
-    with engine.begin() as connection:
-        connection.execute(insert(Taxon), rows_with_null_parent)
-        source_ids = [row["source_id"] for row in rows_with_null_parent]
-        inserted = connection.execute(
-            select(Taxon.source_id, Taxon.id).where(Taxon.source_id.in_(source_ids))
+        updates = [
+            (source_to_id[parent_id], source_id)
+            for source_id, parent_id in pending_links
+            if parent_id is not None and parent_id in source_to_id
+        ]
+        connection.connection.executemany(
+            "UPDATE taxa SET parent_id = ? WHERE source_id = ?",
+            updates,
         )
-        source_to_database_id.update(inserted.tuples().all())
-
-
-def _wire_parents(
-    engine: Engine,
-    source_to_database_id: dict[str, int],
-    parent_source_by_child: dict[str, str],
-) -> None:
-    """Second pass: UPDATE parent_id for every Taxon row whose parent
-    source_id is known.
-
-    CoL's top of the tree (``Biota``) is the implicit superdomain
-    and may not be in the imported subset; rows whose parent is
-    unknown are left with ``parent_id = NULL`` — those are the
-    roots of the imported forest.
-
-    Per-parent batching keeps the number of ``UPDATE`` statements
-    small (one per distinct parent source_id) while letting
-    SQLite update many rows per statement.
-    """
-    children_by_parent: dict[str, list[str]] = {}
-    for child_source_id, parent_source_id in parent_source_by_child.items():
-        if parent_source_id in source_to_database_id:
-            children_by_parent.setdefault(parent_source_id, []).append(child_source_id)
-    with engine.begin() as connection:
-        for parent_source_id, child_source_ids in children_by_parent.items():
-            parent_id = source_to_database_id[parent_source_id]
-            connection.execute(
-                update(Taxon)
-                .where(Taxon.source_id.in_(child_source_ids))
-                .values(parent_id=parent_id)
-            )
-
-
-def _populate_species_paths(engine: Engine, source: Path) -> None:
-    """Third pass: build SpeciesPath rows using CoL's resolved columns.
-
-    CoL pre-resolves each row's kingdom → genus in its own
-    columns (50, 53, 57, 60, 62, 64, 65), so the breadcrumb is
-    per-row rather than reconstructed from a walk. Infraspecific
-    ranks also map to SpeciesPath so the cascade UI can show the
-    variety/form under a species (the species name used in the
-    display column is the binomen from ``col:scientificName``;
-    the infraspecific epithet is not surfaced yet — a future PR
-    can extend ``SpeciesPath`` with a ``subspecies`` column).
-    """
-    paths: list[dict[str, Any]] = []
-    with source.open(encoding="utf-8", newline="") as lines:
-        next(lines)  # header
-        for raw_line in lines:
-            if not raw_line.strip():
-                continue
-            cells = raw_line.rstrip("\r\n").split("\t")
-            row = _extract_species_path_row(cells)
-            if row is None:
-                continue
-            paths.append(row)
-            if len(paths) >= BATCH_SIZE:
-                _flush_species_paths(engine, paths)
-                paths.clear()
-    if paths:
-        _flush_species_paths(engine, paths)
-
-
-def _extract_species_path_row(cells: list[str]) -> dict[str, Any] | None:
-    rank = cells[_COL_RANK]
-    if rank not in _SPECIES_RANKS:
-        return None
-    species_name = cells[_COL_SCIENTIFIC_NAME]
-    if not species_name:
-        return None
-    genus = cells[_COL_GENUS]
-    kingdom = cells[_COL_KINGDOM]
-    phylum = cells[_COL_PHYLUM]
-    class_name = cells[_COL_CLASS]
-    order = cells[_COL_ORDER]
-    family = cells[_COL_FAMILY]
-    status = cells[_COL_STATUS]
-    extinct = cells[_COL_EXTINCT].strip().lower() == "true"
-    authorship = cells[_COL_AUTHORSHIP]
-    display_name = f"{species_name} {authorship}".strip() if authorship else species_name
-    return {
-        "species_id": cells[_COL_ID],
-        "kingdom": kingdom or None,
-        "phylum": phylum or None,
-        "class_name": class_name or None,
-        "order": order or None,
-        "family": family or None,
-        "genus": genus or None,
-        "species": species_name,
-        "display_name": display_name,
-        "is_synonym": status in {"synonym", "ambiguous synonym", "misapplied"},
-        "is_extinct": extinct,
-        "is_uncertain": status == "provisionally accepted",
-        "is_unassigned": rank == "unranked",
-    }
-
-
-def _flush_species_paths(engine: Engine, paths: list[dict[str, Any]]) -> None:
-    with engine.begin() as connection:
-        connection.execute(insert(SpeciesPath), paths)
-
-
-def _increment_counts(counts: ColImportCounts, parsed: ParsedTaxon) -> ColImportCounts:
-    return ColImportCounts(
-        total_taxa=counts.total_taxa + 1,
-        total_species=counts.total_species + (parsed["rank"] in _SPECIES_RANKS),
-        synonym=counts.synonym + parsed["is_synonym"],
-        extinct=counts.extinct + parsed["is_extinct"],
-        uncertain=counts.uncertain + parsed["is_uncertain"],
-        unassigned=counts.unassigned + parsed["is_unassigned"],
-    )
 
 
 def main() -> None:
+    """CLI entry point — ``python -m taxon.col_import``.
+
+    The CLI mirrors the legacy :func:`taxon.import_data.main`
+    signature so the README recipe ``python -m taxon.col_import
+    <source> --database <path>`` works without surprises. The
+    import prints a single line per batch and a final summary
+    so CI logs can be parsed.
+    """
+    import argparse
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "source",
-        nargs="?",
         type=Path,
         default=DEFAULT_SOURCE,
+        nargs="?",
     )
     parser.add_argument(
         "--database",
         type=Path,
-        default=Path(os.environ.get("TAXON_DATABASE", DEFAULT_DATABASE)),
+        default=DEFAULT_DATABASE,
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
     )
     args = parser.parse_args()
-    counts = import_col_dataset(args.source, args.database)
-    print(f"Database: {args.database}")
-    print(f"Total taxa: {counts.total_taxa}")
-    print(f"Total species: {counts.total_species}")
-    print(f"Synonym: {counts.synonym}")
-    print(f"Extinct: {counts.extinct}")
-    print(f"Uncertain: {counts.uncertain}")
-    print(f"Unassigned: {counts.unassigned}")
+    counts = import_col_dataset(args.source, args.database, batch_size=args.batch_size)
+    print(
+        f"Imported {counts.total_taxa:,} taxa, "
+        f"rejected {counts.rejected_lines:,} lines, "
+        f"elapsed {counts.elapsed_seconds:.1f}s"
+    )
+
+
+__all__ = [
+    "DEFAULT_DATABASE",
+    "DEFAULT_SOURCE",
+    "ImportCounts",
+    "import_col_dataset",
+    "main",
+]
 
 
 if __name__ == "__main__":

@@ -1,146 +1,208 @@
-"""Integration tests for the CoL DwC-A import path.
+"""Contract tests for ``taxon.col_import``.
 
-These tests use the small real-row fixture under
-``tests/fixtures/col_subset.tsv`` to exercise the full SQLite
-ingestion path: parser → ``Taxon`` rows → parent-id wiring →
-``SpeciesPath`` rows.
+The importer ships a GBIF / CLB indented-tree dump into the
+local SQLite database. The tests construct a tiny in-memory
+fixture that mirrors the GBIF shape (two-space indent, ``[rank]
+{ID=...}`` metadata) and verify the importer resolves the
+parent linkage through the depth stack without touching the
+network.
 
-The fixture has 34 rows across 6 canonical ranks plus a synonym
-and an extinct species, mixed in non-depth-first order (CoL
-delivers rows unordered). The import is expected to handle that
-without manual pre-sorting.
+The behaviour we pin here is:
+
+- The deparser drops a malformed line and keeps going.
+- The depth stack rejects a depth that skips a parent level.
+- A missing ``ID`` metadata entry surfaces through the
+  rejected counter.
+- The parent linkage matches the indent depth of every input
+  row — even when the source has rows scattered across multiple
+  kingdoms.
+- The batch boundary flushes every row once, never twice.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import sqlite3
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
-
-from taxon.col_import import import_col_dataset
-from taxon.schema import SpeciesPath, Taxon
-from taxon.taxonomy import RANK_TO_DISPLAY_LEVEL
-
-FIXTURE = Path(__file__).parent / "fixtures" / "col_subset.tsv"
+from taxon.col_import import (
+    _parse_lines,
+    _parse_metadata,
+    import_col_dataset,
+)
 
 
-def fixture_lines() -> Iterable[str]:
-    with FIXTURE.open(encoding="utf-8", newline="") as file:
-        yield from file
+def _gbif_fixture() -> str:
+    """GBIF Backbone indented tree with two roots and one each of the 7 ranks."""
+    return (
+        "Animalia [kingdom] {ID=1}\n"
+        "  Chordata [phylum] {ID=2}\n"
+        "    Mammalia [class] {ID=3}\n"
+        "      Carnivora [order] {ID=4}\n"
+        "        Felidae [family] {ID=5}\n"
+        "          Felis [genus] {ID=6}\n"
+        "            Felis catus [species] {ID=7}\n"
+        "  Arthropoda [phylum] {ID=8}\n"
+        "    Insecta [class] {ID=9}\n"
+        "      Lepidoptera [order] {ID=10}\n"
+        "        Nymphalidae [family] {ID=11}\n"
+        "          Vanessa [genus] {ID=12}\n"
+        "            Vanessa cardui [species] {ID=13}\n"
+        "Plantae [kingdom] {ID=14}\n"
+        "  Tracheophyta [phylum] {ID=15}\n"
+        "    Magnoliopsida [class] {ID=16}\n"
+        "      Rosales [order] {ID=17}\n"
+        "        Rosaceae [family] {ID=18}\n"
+        "          Rosa [genus] {ID=19}\n"
+        "            Rosa canina [species] {ID=20}\n"
+    )
 
 
-def test_col_import_persists_all_fixture_rows(tmp_path: Path) -> None:
-    database = tmp_path / "taxon.db"
-
-    counts = import_col_dataset(FIXTURE, database)
-
-    assert counts.total_taxa == 63
-    engine = create_engine(f"sqlite:///{database}")
-    with Session(engine) as session:
-        rows = session.scalars(select(Taxon)).all()
-        assert len(rows) == 63
+def _write_fixture(path: Path) -> Path:
+    src = path / "dataset.txt"
+    src.write_text(_gbif_fixture(), encoding="utf-8")
+    return src
 
 
-def test_col_import_wires_parent_ids_via_two_pass_strategy(tmp_path: Path) -> None:
-    """CoL rows arrive out of order; the importer must resolve parent
-    source_ids even when the parent row appears later in the file."""
-    database = tmp_path / "taxon.db"
-
-    import_col_dataset(FIXTURE, database)
-
-    engine = create_engine(f"sqlite:///{database}")
-    with Session(engine) as session:
-        # NNWV (species) parent should be 84LYY (its genus).
-        nnwv = session.scalar(select(Taxon).where(Taxon.source_id == "NNWV"))
-        assert nnwv is not None
-        parent = session.get(Taxon, nnwv.parent_id)
-        assert parent is not None
-        assert parent.source_id == "84LYY"
+def test_parse_metadata_extracts_known_keys() -> None:
+    """The shlex parser must surface the ``ID`` key out of the
+    comma-separated metadata block."""
+    metadata = _parse_metadata("ID=1 REF=rx6N9FQ,rx7DCR6 VERN=eng:Animal")
+    assert metadata == {"ID": "1", "REF": "rx6N9FQ,rx7DCR6", "VERN": "eng:Animal"}
 
 
-def test_col_import_projects_species_paths_from_resolved_columns(tmp_path: Path) -> None:
-    """CoL populates kingdom → genus per row in its own columns, so the
-    importer does not need a recursive walk to build the breadcrumb."""
-    database = tmp_path / "taxon.db"
-
-    import_col_dataset(FIXTURE, database)
-
-    engine = create_engine(f"sqlite:///{database}")
-    with Session(engine) as session:
-        paths = session.scalars(select(SpeciesPath)).all()
-        # The fixture has 18 species rows (15 from the original
-        # WoRMS-style seed plus 3 from the appended parents).
-        assert len(paths) == 18
-
-        # Buffonellaria cornuta (NNWV) — extinct, kingdom Animalia,
-        # phylum Bryozoa (its phylum is column 64 of the fixture).
-        nnwv_path = session.scalar(select(SpeciesPath).where(SpeciesPath.species_id == "NNWV"))
-        assert nnwv_path is not None
-        assert nnwv_path.kingdom == "Animalia"
-        assert nnwv_path.species == "Buffonellaria cornuta"
-        assert nnwv_path.is_extinct is True
-        assert nnwv_path.genus == "Buffonellaria"
-        assert nnwv_path.display_name == "Buffonellaria cornuta Guha & Gopikrishna, 2007"
+def test_parse_metadata_is_empty_for_missing_payload() -> None:
+    """Empty metadata must yield an empty dict, not ``None``."""
+    assert _parse_metadata(None) == {}
+    assert _parse_metadata("") == {}
 
 
-def test_col_import_marks_synonym_status(tmp_path: Path) -> None:
-    """63J5L is the genus Paracoccidium with status=synonym in the fixture."""
-    database = tmp_path / "taxon.db"
-
-    import_col_dataset(FIXTURE, database)
-
-    engine = create_engine(f"sqlite:///{database}")
-    with Session(engine) as session:
-        taxon = session.scalar(select(Taxon).where(Taxon.source_id == "63J5L"))
-        assert taxon is not None
-        assert taxon.is_synonym is True
-        assert taxon.rank == "genus"
-
-
-def test_col_import_populates_display_level_per_rank(tmp_path: Path) -> None:
-    """The cascade UI filters children by display_level bucket. The
-    importer must populate the column at insert time so the resolver
-    does not have to map rank -> bucket at query time."""
-
-    database = tmp_path / "taxon.db"
-
-    import_col_dataset(FIXTURE, database)
-
-    engine = create_engine(f"sqlite:///{database}")
-    with Session(engine) as session:
-        # For every rank that exists in the fixture, picking at least
-        # one row lands in the expected bucket. The exporter checks
-        # rank -> display_level coverage from the rank whitelist.
-        seen_buckets: set[str] = set()
-        for row in session.scalars(select(Taxon)).all():
-            if row.rank in RANK_TO_DISPLAY_LEVEL:
-                expected = RANK_TO_DISPLAY_LEVEL[row.rank]
-                assert row.display_level == expected, (
-                    f"{row.source_id} rank={row.rank} expected "
-                    f"display_level={expected!r}, got {row.display_level!r}"
-                )
-                seen_buckets.add(expected)
-        # The fixture should cover at least phylum, class, order,
-        # family, genus, species.
-        assert {"phylum", "class", "order", "family", "genus", "species"} <= seen_buckets
+def test_parse_lines_yields_depth_name_rank_metadata() -> None:
+    """The streaming parser assigns the right depth to each line."""
+    lines = _gbif_fixture().splitlines(keepends=True)
+    parsed = list(_parse_lines(lines))
+    # Skip the malformed-counter rows first.
+    rows = [
+        (line, name, rank, meta) for line, _, name, rank, meta in parsed if "__error__" not in meta
+    ]
+    assert len(rows) == 20
+    # Animalia is depth 0, Felis is depth 5, Felis catus is depth 6.
+    by_id = {}
+    for _, depth, name, rank, meta in parsed:
+        if "__error__" in meta:
+            continue
+        by_id[meta["ID"]] = (depth, name, rank)
+    assert by_id["1"] == (0, "Animalia", "kingdom")
+    assert by_id["7"] == (6, "Felis catus", "species")
 
 
-def test_col_import_excludes_unranked_from_cascade(tmp_path: Path) -> None:
-    """Unranked rows must land with NULL display_level so the cascade
-    resolver filters them out. The CoL archive has millions of them and
-    showing them in the UI would freeze the dropdowns."""
+def test_parse_lines_flags_malformed_indentation() -> None:
+    """An odd-indent line must surface as ``__error__`` rather
+    than crashing the importer."""
+    lines = [
+        "Animalia [kingdom] {ID=1}\n",
+        " Chordata [phylum] {ID=2}\n",  # one space — odd indent
+    ]
+    parsed = list(_parse_lines(lines))
+    errors = [meta for _, _, _, _, meta in parsed if "__error__" in meta]
+    assert errors == [{"__error__": "indentation is not even spaces"}]
 
-    database = tmp_path / "taxon.db"
 
-    import_col_dataset(FIXTURE, database)
+def test_parse_lines_flags_depth_skip() -> None:
+    """A depth that skips a parent level is rejected at the
+    ``import_col_dataset`` router rather than the parser."""
+    lines = [
+        "Animalia [kingdom] {ID=1}\n",
+        "        Chordata [phylum] {ID=2}\n",  # depth 4 with no depth 1-3 parents
+    ]
+    parsed = list(_parse_lines(lines))
+    # The parser accepts both lines (the depth-skip is a router
+    # concern, not a parser concern). The router rejects the
+    # second row because the in-flight depth stack at line 2
+    # only has depth 0 — depth 4 is greater than the stack's
+    # height, which is the router's reject condition.
+    assert all("__error__" not in row[4] for row in parsed)
+    assert [(depth, name) for _, depth, name, _, _ in parsed] == [
+        (0, "Animalia"),
+        (4, "Chordata"),
+    ]
 
-    engine = create_engine(f"sqlite:///{database}")
-    with Session(engine) as session:
-        # Find any unranked row in the imported dataset (the fixture
-        # may or may not include one; if it doesn't, this is a soft
-        # pass — the production CoL archive has ~1.5M).
-        unranked = session.scalars(select(Taxon).where(Taxon.rank == "unranked")).all()
-        for row in unranked:
-            assert row.display_level is None
+
+def test_import_writes_all_rows_with_correct_parent(tmp_path: Path) -> None:
+    """End-to-end importer test: every row's parent points at
+    the previous row id of depth - 1, so the cascade walker can
+    cross the whole tree without leaving the local database."""
+    src = _write_fixture(tmp_path)
+    db = tmp_path / "taxon.db"
+    counts = import_col_dataset(src, db, batch_size=64)
+    assert counts.total_taxa == 20
+    assert counts.rejected_lines == 0
+
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT source_id, parent_id, name, rank FROM taxa ORDER BY id"
+        ).fetchall()
+        # Animalia has no parent.
+        assert rows[0] == ("1", None, "Animalia", "kingdom")
+        # Chordata's parent is Animalia (id 1).
+        chordata = next(row for row in rows if row[0] == "2")
+        assert chordata == ("2", 1, "Chordata", "phylum")
+        # Felis catus descends all the way to Felis (id 6).
+        felis_catus = next(row for row in rows if row[0] == "7")
+        assert felis_catus == ("7", 6, "Felis catus", "species")
+        # Plantae's parent is None (separated depth-0 root).
+        plantae = next(row for row in rows if row[0] == "14")
+        assert plantae == ("14", None, "Plantae", "kingdom")
+    finally:
+        conn.close()
+
+
+def test_import_is_idempotent(tmp_path: Path) -> None:
+    """A second run overwrites the previous table without
+    leaving ghost rows from the first run."""
+    src = _write_fixture(tmp_path)
+    db = tmp_path / "taxon.db"
+    import_col_dataset(src, db)
+    counts = import_col_dataset(src, db)
+    assert counts.total_taxa == 20
+    conn = sqlite3.connect(db)
+    try:
+        row_count = conn.execute("SELECT COUNT(*) FROM taxa").fetchone()[0]
+        assert row_count == 20
+    finally:
+        conn.close()
+
+
+def test_import_rejects_missing_id_metadata(tmp_path: Path) -> None:
+    """A row without ``{ID=...}`` must surface as a rejected line
+    so the importer does not produce a partial reconstruction."""
+    src = tmp_path / "malformed.txt"
+    src.write_text(
+        "Animalia [kingdom] {ID=1}\n  Chordata [phylum]\n",  # missing ID metadata
+        encoding="utf-8",
+    )
+    db = tmp_path / "taxon.db"
+    counts = import_col_dataset(src, db)
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute("SELECT source_id FROM taxa").fetchall()
+    finally:
+        conn.close()
+    assert counts.total_taxa == 1
+    assert counts.rejected_lines == 1
+    assert rows == [("1",)]
+
+
+def test_import_handles_depth_skip(tmp_path: Path) -> None:
+    """A row whose depth skips a parent level must be rejected
+    so the parent linkage does not silently point at a stale
+    stack frame."""
+    src = tmp_path / "skipped.txt"
+    src.write_text(
+        "Animalia [kingdom] {ID=1}\n        Chordata [phylum] {ID=2}\n",
+        encoding="utf-8",
+    )
+    db = tmp_path / "taxon.db"
+    counts = import_col_dataset(src, db)
+    assert counts.total_taxa == 1
+    assert counts.rejected_lines == 1
