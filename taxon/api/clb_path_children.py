@@ -326,6 +326,16 @@ def _children_for(
     to every parent that returns non-class ranks in addition to
     class-rank children.
 
+    Family genus aggregation: when the parent is a family and its
+    direct children are subfamily / tribe / subtribe (rather than
+    genus), the resolver descends the subtree and aggregates every
+    genus-rank descendant under a single ``genus`` tier. The
+    cascade UI is fixed at seven dropdowns (Biota → … → Genus),
+    so the inter-family intermediates stay hidden inside the
+    walk. When no genus descendants exist anywhere in the
+    subtree, the resolver falls back to the per-rank-group
+    behaviour so the cascade UI can render the subfamily dropdown.
+
     When the children list is empty, returns ``([], {}, None)`` so
     the cascade UI renders the leaf dropdown and the species-fetch
     effect kicks in.
@@ -390,9 +400,78 @@ def _children_for(
         flat = list(collapsed_grouped["class"])
         return flat, collapsed_grouped, tiers
 
+    # Family genus aggregation: a family whose direct children are
+    # subfamily / tribe / subtribe (rather than genus) hides those
+    # intermediate ranks and emits a single ``genus`` tier that
+    # aggregates every genus-rank descendant underneath. The
+    # cascade UI is fixed at seven dropdowns (Biota → … → Genus),
+    # so the inter-family intermediates would otherwise surface
+    # as empty pickers the user cannot drive forward.
+    #
+    # The recursion walks any subfamily / tribe / subtribe in
+    # breadth-first order, collecting genus-rank rows one level at
+    # a time. CLB / CoL rarely nests more than three levels deep
+    # (subfamily → tribe → genus), but the helper descends until
+    # it stops finding more intermediates — defensive against new
+    # CLB datasets that grow an extra rank.
+    if parent_rank == "family":
+        aggregated_genera = _collect_descendants_by_rank(
+            client,
+            list(grouped.get("subfamily", [])),
+            target_rank="genus",
+            intermediate_ranks=("subfamily", "tribe", "subtribe"),
+        )
+        if aggregated_genera:
+            genus_grouped: dict[str, list[ChecklistBankTaxon]] = {
+                "genus": aggregated_genera,
+            }
+            genus_tiers = [_build_tier("genus", aggregated_genera)]
+            return list(aggregated_genera), genus_grouped, genus_tiers
+        # Fall through to the per-rank-group behaviour when no
+        # genus descendants exist (e.g. fossil families whose
+        # subfamily leaves are also leaves). The cascade UI
+        # renders the subfamily dropdown in that case.
+
     # No collapse: one NextTier per rank group, in CLB's order.
     tiers = [_build_tier(rank_key, grouped[rank_key]) for rank_key in order]
     return list(all_children), grouped, tiers
+
+
+def _collect_descendants_by_rank(
+    client: ChecklistBankClient,
+    start_nodes: list[ChecklistBankTaxon],
+    target_rank: str,
+    intermediate_ranks: tuple[str, ...],
+) -> list[ChecklistBankTaxon]:
+    """Collect every ``target_rank`` descendant under ``start_nodes``.
+
+    Walks the tree breadth-first through any rank that appears in
+    ``intermediate_ranks`` and returns every ``target_rank`` row
+    found along the way. The search terminates when a level yields
+    no new intermediate children — defensive against CLB datasets
+    that grow an extra rank not yet in ``intermediate_ranks``.
+
+    The order of the returned list mirrors the order CLB emits
+    each child list, so the cascade UI renders the genus dropdown
+    in the same sequence users see in the CLB web tool.
+    """
+    if not start_nodes:
+        return []
+    collected: list[ChecklistBankTaxon] = []
+    frontier = list(start_nodes)
+    while frontier:
+        next_frontier: list[ChecklistBankTaxon] = []
+        for node in frontier:
+            for child in client.get_children(node.taxon_id):
+                child_rank = (child.rank or "").lower()
+                if child_rank == target_rank:
+                    collected.append(child)
+                elif child_rank in intermediate_ranks:
+                    next_frontier.append(child)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+    return collected
 
 
 def _build_tier(rank: str, children: list[ChecklistBankTaxon]) -> NextTier:
