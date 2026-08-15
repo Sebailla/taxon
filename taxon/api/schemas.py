@@ -245,6 +245,22 @@ class LinksResponse(_ORMBase):
     links: list[SearchLinkItem]
 
 
+class TaxonLinksResponse(_ORMBase):
+    """Envelope for the per-taxon dispatch-URL endpoint.
+
+    Mirrors :class:`LinksResponse` for any cascade-path-resolved taxon
+    (kingdom → genus, no epithet). ``taxon`` echoes the deepest
+    resolved row so the UI can pin the substitution to a known record
+    without a second lookup. ``links`` is always exactly 13 items in
+    the row order from the templates file -- substitution uses the
+    canonical ``Taxon.name`` (never ``display_name``) so author
+    citations never leak into the emitted URLs.
+    """
+
+    taxon: TaxonResponse
+    links: list[SearchLinkItem]
+
+
 class NextTier(_ORMBase):
     """One available tier below the parent in
     ``GET /api/path-children?path=A|B|C``.
@@ -308,5 +324,6 @@ __all__ = [
     "SpeciesListResponse",
     "SpeciesLookupResponse",
     "SpeciesPathResponse",
+    "TaxonLinksResponse",
     "TaxonResponse",
 ]
