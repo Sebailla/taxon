@@ -980,9 +980,7 @@ def test_children_for_groups_three_intermediate_ranks() -> None:
     # tier covers at least Mammalia + Actinopterygii.
     assert chordata_response is not None
     chordata_class_names = {
-        c.canonical_name
-        for tier in chordata_response.next_tiers or []
-        for c in tier.children
+        c.canonical_name for tier in chordata_response.next_tiers or [] for c in tier.children
     }
     assert "Mammalia" in chordata_class_names
 
