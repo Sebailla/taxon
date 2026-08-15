@@ -3,7 +3,7 @@ indented-tree dataset.
 
 The importer ships a GBIF Backbone or Catalogue of Life (CLB)
 indented-tree dump into the local SQLite database. The source
-file uses two spaces per depth level and the syntax:
+file uses two-space indent per depth level and the syntax:
 
     <name> [<rank>] {ID=<source_id> <metadata>}
 
@@ -11,7 +11,10 @@ The metadata block is shlex-tokenised; the importer captures the
 ``ID`` key as the canonical external identifier and ignores the
 rest for now (later migrations can promote additional metadata
 columns — see :mod:`taxon.import_data` for the WoRMS-shaped
-``Taxon`` projection).
+``Taxon`` projection). The depth of every line is the parent
+link: a stack of the active ancestry keeps the last source id
+at each depth, and the next row's parent is the source id at
+``depth - 1``.
 
 The column shape mirrors the existing :class:`taxon.schema.Taxon`
 table: every node gets a row id, a parent id, a name, a rank, a
@@ -24,12 +27,19 @@ The leftover columns inherited from the older WoRMS importer
 ``is_unassigned``) keep their default ``False`` so the cascade
 UI's filter API keeps working out of the box.
 
-The importer is a streaming batched write. The dataset is hundreds
-of millions of taxons at the upper end; the batch boundary fires
-every :data:`BATCH_SIZE` rows so the SQLite write throughput stays
-high without holding the full result set in memory. The CLI is
-exposed as ``python -m taxon.col_import <source> --database
-<path>``.
+The importer is a streaming batched write. The full GBIF
+Backbone is on the order of 7 million rows; the batch boundary
+fires every :data:`BATCH_SIZE` rows so the SQLite write
+throughput stays high without holding the full result set in
+memory. The CLI is exposed as ``python -m taxon.indented_import
+<source> --database <path>``.
+
+Historical note: this is the second attempt at landing the
+importer. The first shipped as ``taxon.col_import`` and was
+discarded during a merge conflict with the legacy DwC-A
+ingester under the same name. The DwC-A ingester was unused
+by the backend and is removed in the same PR so the
+indented-tree importer is the only importer left.
 """
 
 from __future__ import annotations
@@ -46,12 +56,10 @@ from sqlalchemy import Engine, create_engine, event, insert
 
 from taxon.schema import Base, Taxon
 
-#: Pre-compiled regex shared with the legacy WoRMS importer. The
-#: GBIF indented-tree rows match the same shape (``<indent><name>
-#: [<rank>] {ID=<source_id> <metadata>}``); GBIF also emits
-#: WoRMS-shaped rows because the GBIF Backbone was assembled from
-#: WoRMS (and other sources) under the same indentation
-#: convention.
+#: Pre-compiled regex that matches the indented-tree shape
+#: shared by GBIF Backbone and CLB. The metadata block is
+#: optional so the importer can also flag malformed lines
+#: through the rejected-lines counter rather than raising.
 LINE_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<name>.+?)\s*\[(?P<rank>[^\]]+)\]\s*"
     r"(?:\{(?P<metadata>.*?)\})?(?:\s+#.*)?\s*$"
@@ -63,7 +71,7 @@ LINE_RE = re.compile(
 #: a second on a modern SSD.
 BATCH_SIZE = 20_000
 
-#: Default source path for the CLI. The ``TAXON_COL_DATASET``
+#: Default source path for the CLI. The ``TAXON_INDENTED_DATASET``
 #: environment variable overrides the default without touching
 #: the README; the explicit ``--database`` flag wins over both.
 DEFAULT_SOURCE = Path(
@@ -155,7 +163,7 @@ def _parse_lines(
         yield source_line, depth, match.group("name"), match.group("rank"), metadata
 
 
-def import_col_dataset(
+def import_indented_dataset(
     source_path: Path | str,
     database_path: Path | str = DEFAULT_DATABASE,
     *,
@@ -167,11 +175,11 @@ def import_col_dataset(
     recreating it so a re-run is idempotent. The legacy
     :class:`taxon.schema.SpeciesPath` rows and the WoRMS-shape
     seed data are NOT touched by this importer — the cascade UI
-    uses the GBIF-shape ``taxa`` rows for the species-list and
+    uses the indented-tree rows for the species-list and
     children endpoints, while the WoRMS-shape rows keep serving
     the search-source dispatch endpoints through the historical
     helper. The two shapes coexist in the same database; the
-    importer only writes the GBIF half.
+    importer only writes the indented-tree half.
 
     The parent linkage is recovered from the indent depth of
     every line: a stack of source-id pointers keeps the last
@@ -309,13 +317,13 @@ def _resolve_parent_ids(
 
 
 def main() -> None:
-    """CLI entry point — ``python -m taxon.col_import``.
+    """CLI entry point — ``python -m taxon.indented_import``.
 
     The CLI mirrors the legacy :func:`taxon.import_data.main`
-    signature so the README recipe ``python -m taxon.col_import
-    <source> --database <path>`` works without surprises. The
-    import prints a single line per batch and a final summary
-    so CI logs can be parsed.
+    signature so the README recipe ``python -m
+    taxon.indented_import <source> --database <path>`` works
+    without surprises. The import prints a single line per batch
+    and a final summary so CI logs can be parsed.
     """
     import argparse
 
@@ -337,7 +345,7 @@ def main() -> None:
         default=BATCH_SIZE,
     )
     args = parser.parse_args()
-    counts = import_col_dataset(args.source, args.database, batch_size=args.batch_size)
+    counts = import_indented_dataset(args.source, args.database, batch_size=args.batch_size)
     print(
         f"Imported {counts.total_taxa:,} taxa, "
         f"rejected {counts.rejected_lines:,} lines, "
@@ -349,7 +357,7 @@ __all__ = [
     "DEFAULT_DATABASE",
     "DEFAULT_SOURCE",
     "ImportCounts",
-    "import_col_dataset",
+    "import_indented_dataset",
     "main",
 ]
 
