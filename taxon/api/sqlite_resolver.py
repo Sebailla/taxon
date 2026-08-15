@@ -27,19 +27,12 @@ implementation that the FastAPI router hands a session to. The
 router module owns the FastAPI surface; this module owns the data
 shape.
 
-.. note::
-
-    **Gotcha**: Rows imported via
-    :func:`taxon.indented_import.import_indented_dataset` have
-    ``display_level IS NULL`` by design (see
-    :mod:`taxon.indented_import` module docstring). The cascade
-    resolver filters by ``display_level``, so the cascade endpoints
-    will return 404 for every path until ``display_level`` is
-    populated — either by re-running
-    :func:`taxon.import_data.import_dataset` (the established path)
-    or by applying :func:`taxon.taxonomy.display_level` at import
-    time. The 6-tier lookup and links endpoints are unaffected because
-    they filter by ``Taxon.rank``, not ``display_level``.
+The display bucket is computed at query time via
+:func:`taxon.api.hierarchy._effective_display_level` so the cascade
+works equivalently against the WoRMS-shaped importer (which
+populates ``Taxon.display_level`` at insert time) and the GBIF
+indented-tree importer (which intentionally leaves the column NULL
+— see :mod:`taxon.indented_import`).
 """
 
 from __future__ import annotations
@@ -52,6 +45,7 @@ from sqlalchemy.orm import Session
 from taxon.api.errors import NotFoundError
 from taxon.api.hierarchy import (
     TaxonRow,
+    _effective_display_level,
     _intermediate_ranks_for,
     resolve_path_by_display_level,
 )
@@ -342,7 +336,7 @@ def _flatten_species_subtree(
             stmt = (
                 select(Taxon)
                 .where(Taxon.parent_id == node_id)
-                .where(func.lower(Taxon.display_level) == "species")
+                .where(func.lower(_effective_display_level()) == "species")
                 .where(inclusion.marker_predicate())
                 .order_by(func.lower(Taxon.name), Taxon.name)
             )

@@ -47,7 +47,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from sqlalchemy import func, select
+from sqlalchemy import Case, case, func, select
 from sqlalchemy.orm import Session
 
 from taxon.schema import Taxon
@@ -231,6 +231,32 @@ def _intermediate_ranks_for(level: str) -> set[str]:
     return bucket
 
 
+def _effective_display_level() -> Case[str | None]:
+    """Return a SQL expression that yields the bucket, computed at query time.
+
+    The WoRMS DwC-A importer (``taxon.import_data``) pre-populates
+    ``Taxon.display_level`` at insert time. The GBIF indented-tree
+    importer (``taxon.indented_import``) intentionally leaves the
+    column NULL so :func:`taxon.taxonomy.display_level` is the source
+    of truth. Both shapes resolve through this expression:
+
+    - ``Taxon.display_level`` when the column is populated (WoRMS).
+    - ``taxonomy_display_level(Taxon.rank)`` when the column is
+      NULL (GBIF indented). The function is registered on every
+      SQLite connection via :func:`taxon.api._build_engine`.
+
+    The resolver filters, orders, and groups by the result of this
+    expression so the cascade endpoints work identically against
+    either data source. Returns ``None`` when the rank is outside
+    :data:`taxon.taxonomy.RANK_TO_DISPLAY_LEVEL` (the row is filtered
+    out of the cascade).
+    """
+    return case(
+        (Taxon.display_level.isnot(None), Taxon.display_level),
+        else_=func.taxonomy_display_level(Taxon.rank),
+    )
+
+
 def _candidate_bucket_indices(last_bucket_index: int | None) -> list[int]:
     """Return the bucket indices to try for the next path segment.
 
@@ -295,7 +321,7 @@ def resolve_path_by_display_level(
             stmt = (
                 select(Taxon)
                 .where(func.lower(Taxon.name) == segment.lower())
-                .where(func.lower(Taxon.display_level) == bucket.lower())
+                .where(func.lower(_effective_display_level()) == bucket.lower())
             )
             if parent_id is not None:
                 stmt = stmt.where(Taxon.parent_id == parent_id)
