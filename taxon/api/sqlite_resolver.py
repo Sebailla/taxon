@@ -26,11 +26,25 @@ The module never imports ``httpx``; it is a pure SQLAlchemy
 implementation that the FastAPI router hands a session to. The
 router module owns the FastAPI surface; this module owns the data
 shape.
+
+.. note::
+
+    **Gotcha**: Rows imported via
+    :func:`taxon.indented_import.import_indented_dataset` have
+    ``display_level IS NULL`` by design (see
+    :mod:`taxon.indented_import` module docstring). The cascade
+    resolver filters by ``display_level``, so the cascade endpoints
+    will return 404 for every path until ``display_level`` is
+    populated — either by re-running
+    :func:`taxon.import_data.import_dataset` (the established path)
+    or by applying :func:`taxon.taxonomy.display_level` at import
+    time. The 6-tier lookup and links endpoints are unaffected because
+    they filter by ``Taxon.rank``, not ``display_level``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -52,6 +66,8 @@ from taxon.api.species import (
     PAGE_CAP,
     InclusionFilter,
     SpeciesPage,
+    _decode_cursor,
+    _encode_cursor,
     parse_include,
 )
 from taxon.schema import Taxon
@@ -68,29 +84,20 @@ _SYNTHETIC_ROOT_IDS: tuple[tuple[str, str], ...] = (
 
 @dataclass(frozen=True)
 class _PathParent:
-    """Internal view of a resolved path's deepest taxon.
-
-    Keeps the :class:`TaxonRow` plus the case-folded canonical name so
-    the resolver can dedupe synthetic rows from real SQLite rows in a
-    single comparison.
-    """
+    """Internal view of a resolved path's deepest taxon."""
 
     row: TaxonRow
-    canonical_name_lower: str
 
 
 @dataclass(frozen=True)
 class _PathResult:
     """Internal bundle returned by :func:`_resolve_path_internal`.
 
-    Wraps the deepest matched row plus the list of synthetic roots
-    prepended to the path (so the cascade UI keeps seeing the same
-    dropdown shape). ``None`` means a 404 — the router turns that
-    into a NotFoundError.
+    ``None`` parent means a 404 — the router turns that into a
+    NotFoundError.
     """
 
     parent: _PathParent | None
-    synthetic_prefix: list[TaxonRow] = field(default_factory=list)
 
 
 def list_kingdoms(session: Session) -> list[TaxonResponse]:
@@ -279,7 +286,7 @@ def _list_species_page_under_parent(
     """
     after_name: str | None = None
     if cursor:
-        after_name = species_cursor_decode(cursor)
+        after_name = _decode_cursor(cursor)
 
     collected: list[TaxonRow] = _flatten_species_subtree(
         session,
@@ -305,7 +312,7 @@ def _list_species_page_under_parent(
     next_cursor: str | None = None
     if len(page_rows) > PAGE_CAP:
         page_rows = page_rows[:PAGE_CAP]
-        next_cursor = species_cursor_encode(page_rows[-1].name)
+        next_cursor = _encode_cursor(page_rows[-1].name)
     return SpeciesPage(rows=page_rows, next_cursor=next_cursor)
 
 
@@ -349,22 +356,6 @@ def _flatten_species_subtree(
     return collected
 
 
-def species_cursor_encode(last_name: str) -> str:
-    """Encode a species cursor as the canonical name of the last row.
-
-    The cursor is opaque to the client but human-readable in logs.
-    Mirrors :func:`taxon.api.species._encode_cursor`.
-    """
-    return f"name:{last_name}"
-
-
-def species_cursor_decode(cursor: str) -> str:
-    """Decode a species cursor to the bare canonical name."""
-    if not cursor.startswith("name:"):
-        raise ValueError(f"invalid cursor: {cursor!r}")
-    return cursor[len("name:") :]
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -397,7 +388,7 @@ def _resolve_path_internal(
     if deepest is None:
         return _PathResult(parent=None)
     return _PathResult(
-        parent=_PathParent(row=deepest, canonical_name_lower=deepest.name.lower()),
+        parent=_PathParent(row=deepest),
     )
 
 

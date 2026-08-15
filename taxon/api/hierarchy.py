@@ -34,9 +34,6 @@ The PR adds three display-level-aware helpers:
 - :func:`resolve_path_by_display_level` — descendant lookup that
   matches each path segment against ``display_level == bucket`` and
   verifies the parent chain is contiguous across matched nodes.
-- :func:`list_children_by_display_level` — children grouped by their
-  actual rank label, used by the roll-up helpers in
-  :mod:`taxon.api.sqlite_resolver`.
 
 The cascade walk was historically projected onto a fixed 9-tier tuple
 (``biota, kingdom, phylum, subphylum, class, order, family, genus,
@@ -192,7 +189,6 @@ __all__ = [
     "TaxonRow",
     "_intermediate_ranks_for",
     "list_children",
-    "list_children_by_display_level",
     "list_root_taxa",
     "resolve_path",
     "resolve_path_by_display_level",
@@ -233,34 +229,6 @@ def _intermediate_ranks_for(level: str) -> set[str]:
     bucket = {rank for rank, lvl in RANK_TO_DISPLAY_LEVEL.items() if lvl == level}
     bucket.discard(level)
     return bucket
-
-
-def _path_buckets(segments: list[str]) -> list[str]:
-    """Map each path segment to its display-level bucket.
-
-    Kept for unit-testing the cascade tuple semantics; the actual
-    resolver computes the target bucket per-segment from the
-    previous matched row's display_level. Returns the cascaded
-    bucket sequence the resolver would consume: the first segment
-    anchors on ``kingdom``, every subsequent segment advances one
-    tier, and the leaf tier (``species``) is sticky so off-tuple
-    intermediates at the species bucket (subspecies / variety /
-    form) keep resolving through the same anchor.
-    """
-    if not segments:
-        return []
-    last_index: int | None = None
-    buckets: list[str] = []
-    for _ in segments:
-        if last_index is None:
-            target = _DISPLAY_LEVELS_IN_ORDER.index("kingdom")
-        elif last_index >= len(_DISPLAY_LEVELS_IN_ORDER) - 1:
-            target = last_index
-        else:
-            target = last_index + 1
-        buckets.append(_DISPLAY_LEVELS_IN_ORDER[target])
-        last_index = target
-    return buckets
 
 
 def _candidate_bucket_indices(last_bucket_index: int | None) -> list[int]:
@@ -342,34 +310,3 @@ def resolve_path_by_display_level(
         parent_id = current.id
 
     return current
-
-
-def list_children_by_display_level(
-    session: Session,
-    parent_id: int,
-    level: str,
-) -> dict[str, list[TaxonRow]]:
-    """Group the direct children of ``parent_id`` whose ``display_level == level`` by their actual rank.
-
-    Returns a dict keyed by lower-cased rank label; each value is the
-    list of children at that rank, ordered by canonical ``name``
-    (case-insensitive). The cascade UI reads the per-rank groups to
-    render one dropdown per group with the rank label as the dropdown
-    caption.
-
-    The function never returns ``None``: when the parent has no
-    matching children the result is an empty dict and the caller
-    renders the leaf dropdown. ``level`` is matched case-insensitively
-    to mirror the rest of the API.
-    """
-    stmt = (
-        select(Taxon)
-        .where(Taxon.parent_id == parent_id)
-        .where(func.lower(Taxon.display_level) == level.lower())
-        .order_by(func.lower(Taxon.name), Taxon.name)
-    )
-    grouped: dict[str, list[TaxonRow]] = {}
-    for child in session.scalars(stmt).all():
-        key = child.rank.lower()
-        grouped.setdefault(key, []).append(_to_row(child))
-    return grouped

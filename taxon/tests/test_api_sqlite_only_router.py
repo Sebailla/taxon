@@ -489,3 +489,166 @@ def test_species_list_404_on_bad_segment(app_mollusca: FastAPI) -> None:
         )
     assert response.status_code == 404
     assert "Badspecies" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# /api/species-list — pagination + include filter
+# ---------------------------------------------------------------------------
+
+
+def _many_species_fixture(count: int = 650) -> str:
+    """Build an indented tree with ``count`` species under a single genus.
+
+    The genus sits below the canonical Animalia → Mollusca → Gastropoda
+    → Littorinimorpha → Littorinidae (display_level == family) chain
+    so the path resolver finds it via the same path string as the
+    Mollusca fixture. Species names are zero-padded so alphabetic
+    sort matches generation order; accepted (no marker) is the default.
+    """
+    lines = [
+        "Biota [superdomain] {ID=urn:0}",
+        "  Animalia [kingdom] {ID=urn:1}",
+        "    Mollusca [phylum] {ID=urn:2}",
+        "      Gastropoda [class] {ID=urn:3}",
+        "        Littorinimorpha [order] {ID=urn:4}",
+        "          Littorinoidea [superfamily] {ID=urn:5}",
+        "            Littorinidae [family] {ID=urn:6}",
+        "              Littorina [genus] {ID=urn:7}",
+    ]
+    for index in range(1, count + 1):
+        lines.append(
+            f"                Littorina-species-{index:04d} [species] {{ID=urn:{7 + index}}}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _mixed_marker_fixture() -> str:
+    """A single genus with three children: one accepted, one synonym, one extinct.
+
+    The WoRMS indented parser recognises ``=`` (synonym) and ``†``
+    (extinct) as label prefixes. Each marker-bearing taxon carries the
+    flag in the underlying ``Taxon`` column so the include-filter
+    predicates can widen the result set per toggle.
+    """
+    return (
+        "Biota [superdomain] {ID=urn:0}\n"
+        "  Animalia [kingdom] {ID=urn:1}\n"
+        "    Mollusca [phylum] {ID=urn:2}\n"
+        "      Gastropoda [class] {ID=urn:3}\n"
+        "        Littorinimorpha [order] {ID=urn:4}\n"
+        "          Littorinoidea [superfamily] {ID=urn:5}\n"
+        "            Littorinidae [family] {ID=urn:6}\n"
+        "              Littorina [genus] {ID=urn:7}\n"
+        "                Littorina littorea [species] {ID=urn:8}\n"
+        "                =Littorina saxatilis [species] {ID=urn:9}\n"
+        "                †Littorina obsoleta [species] {ID=urn:10}\n"
+    )
+
+
+@pytest.fixture
+def app_many_species(tmp_path: Path) -> FastAPI:
+    from taxon.api import create_app
+    from taxon.import_data import import_dataset
+
+    db = tmp_path / "taxon.db"
+    src = tmp_path / "dataset.txt"
+    src.write_text(_many_species_fixture(), encoding="utf-8")
+    import_dataset(src, db, batch_size=512)
+    return create_app(database_url=f"sqlite:///{db}")
+
+
+@pytest.fixture
+def app_mixed_markers(tmp_path: Path) -> FastAPI:
+    from taxon.api import create_app
+    from taxon.import_data import import_dataset
+
+    db = tmp_path / "taxon.db"
+    src = tmp_path / "dataset.txt"
+    src.write_text(_mixed_marker_fixture(), encoding="utf-8")
+    import_dataset(src, db, batch_size=64)
+    return create_app(database_url=f"sqlite:///{db}")
+
+
+def test_species_list_pagination_cursor_roundtrip(app_many_species: FastAPI) -> None:
+    """The species-list ``next_cursor`` lets the caller walk past the 500-row cap.
+
+    The fixture seeds 650 species under a single genus. The endpoint
+    does not accept a ``limit`` parameter (``PAGE_CAP`` is fixed at 500),
+    so the first page holds exactly 500 rows and carries a
+    ``next_cursor`` prefixed with ``"name:"`` so the second request can
+    resume the walk. The combined pages must cover all 650 rows with
+    no overlap and no leftover cursor on the second page.
+    """
+    path = (
+        "Animalia%7CMollusca%7CGastropoda%7CLittorinimorpha"
+        "%7CLittorinoidea%7CLittorinidae%7CLittorina"
+    )
+    with _client(app_many_species) as client:
+        first = client.get(f"/api/species-list?path={path}")
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert len(first_body["items"]) == 500
+        first_names = [item["name"] for item in first_body["items"]]
+        cursor = first_body["next_cursor"]
+        assert isinstance(cursor, str)
+        assert cursor.startswith("name:")
+
+        second = client.get(f"/api/species-list?path={path}&cursor={cursor}")
+        assert second.status_code == 200, second.text
+        second_body = second.json()
+        second_names = [item["name"] for item in second_body["items"]]
+        # The remaining 150 rows fit on the second page; no further cursor.
+        assert len(second_names) == 150
+        assert second_body["next_cursor"] is None
+
+    # The two pages together cover all 650 seeded species with no overlap.
+    combined = first_names + second_names
+    assert len(combined) == 650
+    assert len(set(combined)) == 650
+    expected = {f"Littorina-species-{index:04d}" for index in range(1, 651)}
+    assert set(combined) == expected
+
+
+def test_species_list_include_filter_widens_response(app_mixed_markers: FastAPI) -> None:
+    """The ``?include=`` query parameter widens the species list per toggle.
+
+    The fixture seeds three species under ``Littorina``: an accepted
+    species (``Littorina littorea``), a synonym (``Littorina saxatilis``,
+    marker ``=``), and an extinct species (``Littorina obsoleta``,
+    marker ``†``). The default response must show only the accepted
+    row; each toggle (and their union) widens to the matching rows
+    while keeping the accepted row present.
+    """
+    path = (
+        "Animalia%7CMollusca%7CGastropoda%7CLittorinimorpha"
+        "%7CLittorinoidea%7CLittorinidae%7CLittorina"
+    )
+    with _client(app_mixed_markers) as client:
+        default = client.get(f"/api/species-list?path={path}").json()
+        synonyms = client.get(f"/api/species-list?path={path}&include=synonyms").json()
+        extinct = client.get(f"/api/species-list?path={path}&include=extinct").json()
+        both = client.get(f"/api/species-list?path={path}&include=synonyms,extinct").json()
+
+    default_names = [item["name"] for item in default["items"]]
+    synonym_names = [item["name"] for item in synonyms["items"]]
+    extinct_names = [item["name"] for item in extinct["items"]]
+    both_names = [item["name"] for item in both["items"]]
+
+    # Accepted-only is the default — the accepted species surfaces, the
+    # marker-bearing rows are filtered out.
+    assert default_names == ["Littorina littorea"]
+    # Each toggle widens to the accepted row + the matching marker.
+    assert sorted(synonym_names) == [
+        "Littorina littorea",
+        "Littorina saxatilis",
+    ]
+    assert sorted(extinct_names) == [
+        "Littorina littorea",
+        "Littorina obsoleta",
+    ]
+    # Both toggles enable every seeded species.
+    assert sorted(both_names) == [
+        "Littorina littorea",
+        "Littorina obsoleta",
+        "Littorina saxatilis",
+    ]
