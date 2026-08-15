@@ -36,6 +36,8 @@ line-length = 100
 exclude = [
     "openspec/**",
     "documents-es/openspec/**",
+    "learn-es/**",
+    "documents-es/learn-es/**",
 ]
 
 [tool.mypy]
