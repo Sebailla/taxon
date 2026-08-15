@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
 import type { NextTier, TaxonResponse } from "../src/api";
+import { waitForEnabledOption } from "./test-helpers";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -135,7 +136,7 @@ describe("Cascade UI: loading and empty states", () => {
     );
     await screen.findByRole("option", { name: "Animalia" });
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
 
