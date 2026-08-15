@@ -217,6 +217,33 @@ describe("fetchLinks", () => {
     const url = (fetchMock.mock.calls[0] as [string])[0];
     expect(url).toBe("/api/Animalia/species/links");
   });
+
+  it("strips the cascade root (Biota / Viruses) before resolving the path", async () => {
+    // The cascade always seeds the path with the CLB superdomain
+    // (Biota or Viruses). The links endpoint expects a
+    // 6-segment breadcrumb, so the resolver strips the root
+    // and hits /api/<kingdom>/<phylum>/…/<epithet>/links.
+    const fetchMock = mockFetchFetchOnce(
+      mockFetchResponse({ status: 200, body: { species: {}, links: [] } }),
+    );
+    await fetchLinks(
+      ["Biota", "Animalia", "Chordata", "Mammalia"],
+      " Panthera leo",
+    );
+    const url = (fetchMock.mock.calls[0] as [string])[0];
+    expect(url).toBe(
+      "/api/Animalia/Chordata/Mammalia/%20Panthera%20leo/links",
+    );
+  });
+
+  it("strips Viruses when it is the cascade root", async () => {
+    const fetchMock = mockFetchFetchOnce(
+      mockFetchResponse({ status: 200, body: { species: {}, links: [] } }),
+    );
+    await fetchLinks(["Viruses", "Virus-A"], "strain-1");
+    const url = (fetchMock.mock.calls[0] as [string])[0];
+    expect(url).toBe("/api/Virus-A/strain-1/links");
+  });
 });
 
 describe("error mapping", () => {

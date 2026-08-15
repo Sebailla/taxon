@@ -310,8 +310,18 @@ export async function fetchLinks(
   epithet: string,
   init?: { signal?: AbortSignal },
 ): Promise<ApiResult<LinksResponse>> {
+  // Drop the cascade root (``Biota`` / ``Viruses``) so the path
+  // matches the backend's 6-segment contract:
+  // ``/{kingdom}/{phylum}/{class}/{order}/{family}/{genus}/{epithet}/links``.
+  // The cascade always starts with the CLB superdomain as the
+  // first pick, so the segments after the first are the breadcrumb.
+  const breadcrumb =
+    parentSegments[0]?.toLowerCase() === "biota" ||
+    parentSegments[0]?.toLowerCase() === "viruses"
+      ? parentSegments.slice(1)
+      : parentSegments;
   return apiGet<LinksResponse>(
-    `/${encodeSegments([...parentSegments, epithet])}/links`,
+    `/${encodeSegments([...breadcrumb, epithet])}/links`,
     init,
   );
 }
