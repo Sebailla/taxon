@@ -1,21 +1,16 @@
-/** Contract tests for the cascade subphylum tier.
+/** Contract tests for the cascade subphylum aggregation rule.
 
-This file pins the cascade's behaviour when a /path-children call
-returns ``next_tiers = [{rank: "subphylum", ...}]``. The CLB
-resolver drops the ``rank=`` filter on the children fetch and
-groups children by their actual CLB rank label; the wire envelope
-exposes ``next_tiers`` (one ``NextTier`` per rank group) so the
-cascade UI renders one dropdown per group with the dropdown
-label taken from the tier's ``label`` field.
-
-The cascade renders the chain with one dropdown per picked
-segment plus a trailing picker for the next segment. The trailing
-picker's label is the tier's ``label`` ("Subphylum" in this case)
-and its options are the response's children (the three chordate
-subphyla).
+When a phylum has subphylum children, the backend descends into
+every subphylum and aggregates the class-rank children into a
+single ``class`` tier (the **phylum class aggregation** rule). The
+cascade UI therefore never renders a Subphylum dropdown — the
+seven fixed slots (Biota, Kingdom, Phylum, Class, Order, Family,
+Genus) absorb the subphylum hierarchy. After picking a phylum
+that has subphylum children, the Class dropdown stays disabled
+until the backend returns the aggregated class list.
 */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -52,10 +47,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Cascade subphylum tier renders next picker as 'Subphylum'", () => {
+describe("Cascade phylum class aggregation", () => {
   it(
-    "renders Biota → Animalia → Chordata → Subphylum with the response children",
+    "Chordata's subphylum children never surface as a Subphylum dropdown",
     async () => {
+      // The backend, after the phylum class aggregation rule,
+      // returns every class under Chordata's subphyla as a single
+      // ``class`` tier. The cascade UI renders exactly the seven
+      // fixed dropdowns — no Subphylum picker.
       const fetchMock = vi
         .fn()
         // 1. Initial root fetch: Biota + Viruses.
@@ -65,7 +64,7 @@ describe("Cascade subphylum tier renders next picker as 'Subphylum'", () => {
             taxon(2, "Viruses", "biota"),
           ]),
         )
-        // 2. Pick Biota → root children (kingdom rank).
+        // 2. Pick Biota → kingdom-rank children.
         .mockResolvedValueOnce(
           mockFetchJson({
             parent: taxon(1, "Biota", "biota"),
@@ -95,30 +94,28 @@ describe("Cascade subphylum tier renders next picker as 'Subphylum'", () => {
             ],
           }),
         )
-        // 4. Pick Chordata → subphylum children (Cephalochordata,
-        //    Tunicata, Vertebrata). The best-effort resolver emits
-        //    one ``NextTier`` per rank group.
+        // 4. Pick Chordata → the backend aggregates every class
+        //    under every subphylum into a single ``class`` tier.
+        //    The cascade renders the Class dropdown populated
+        //    with Mammalia, Aves, Reptilia, ... regardless of
+        //    how many subphyla sit between them.
         .mockResolvedValueOnce(
           mockFetchJson({
             parent: taxon(20, "Chordata", "phylum"),
             children: [
-              taxon(30, "Cephalochordata", "subphylum", 20),
-              taxon(31, "Tunicata", "subphylum", 20),
-              taxon(32, "Vertebrata", "subphylum", 20),
+              taxon(30, "Mammalia", "class", 20),
+              taxon(31, "Aves", "class", 20),
+              taxon(32, "Reptilia", "class", 20),
             ],
             next_tiers: [
               {
-                rank: "subphylum",
-                label: "Subphylum",
-                examples: [
-                  "Cephalochordata",
-                  "Tunicata",
-                  "Vertebrata",
-                ],
+                rank: "class",
+                label: "Class",
+                examples: ["Mammalia", "Aves", "Reptilia"],
                 children: [
-                  taxon(30, "Cephalochordata", "subphylum", 20),
-                  taxon(31, "Tunicata", "subphylum", 20),
-                  taxon(32, "Vertebrata", "subphylum", 20),
+                  taxon(30, "Mammalia", "class", 20),
+                  taxon(31, "Aves", "class", 20),
+                  taxon(32, "Reptilia", "class", 20),
                 ],
               },
             ],
@@ -129,36 +126,38 @@ describe("Cascade subphylum tier renders next picker as 'Subphylum'", () => {
       const user = userEvent.setup();
       render(<Cascade />);
 
-      // Step 1: pick Biota in the root dropdown.
+      // Walk to Phylum.
       await user.selectOptions(
         await screen.findByRole("combobox", { name: "Biota" }),
         "Biota",
       );
-      // Step 2: pick Animalia in the Kingdom picker.
       await user.selectOptions(
         await screen.findByRole("combobox", { name: "Kingdom" }),
         "Animalia",
       );
-      // Step 3: pick Chordata in the Phylum picker.
       await user.selectOptions(
         await screen.findByRole("combobox", { name: "Phylum" }),
         "Chordata",
       );
 
-      // The trailing picker is labelled "Subphylum" (the tier
-      // label the resolver returned in ``next_tiers[0]``) and
-      // lists the three chordate subphyla.
-      const subphylumDropdown = await screen.findByRole("combobox", {
-        name: "Subphylum",
-      });
-      expect(subphylumDropdown).toBeInTheDocument();
+      // The Class dropdown is populated with the aggregated
+      // classes. The subphylum hierarchy is invisible — no
+      // Subphylum picker exists.
+      const classDropdown = await screen.findByRole("combobox", { name: "Class" });
       await waitFor(() => {
         expect(
-          screen.getByRole("option", { name: "Cephalochordata" }),
+          within(classDropdown).getByRole("option", { name: "Mammalia" }),
         ).toBeInTheDocument();
       });
-      expect(screen.getByRole("option", { name: "Tunicata" })).toBeInTheDocument();
-      expect(screen.getByRole("option", { name: "Vertebrata" })).toBeInTheDocument();
+      expect(
+        within(classDropdown).getByRole("option", { name: "Aves" }),
+      ).toBeInTheDocument();
+      expect(
+        within(classDropdown).getByRole("option", { name: "Reptilia" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("combobox", { name: "Subphylum" }),
+      ).not.toBeInTheDocument();
     },
   );
 });

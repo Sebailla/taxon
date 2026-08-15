@@ -30,11 +30,13 @@ import { z } from "zod";
 
 /** Mirror of the ``TaxonResponse`` interface in ``api.ts``. */
 export const TaxonResponseSchema = z.object({
-  id: z.number(),
+  // The CLB resolver returns opaque string ids (``"5T6MX"``,
+  // ``"6V6DZ"``, ``"CH2"`` …) — they are not numeric.
+  id: z.union([z.string(), z.number()]),
   name: z.string(),
   display_name: z.string(),
   rank: z.string(),
-  parent_id: z.number().nullable(),
+  parent_id: z.union([z.string(), z.number()]).nullable(),
   is_synonym: z.boolean(),
   is_extinct: z.boolean(),
   is_uncertain: z.boolean(),

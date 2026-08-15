@@ -64,7 +64,10 @@ export interface SpeciesListResponse {
 }
 
 export interface SpeciesLookupResponse {
-  id: number;
+  // CLB resolver returns opaque string ids (``"5T6MX"``,
+  // ``"6V6DZ"`` …). Numeric ids are still supported for
+  // backward-compat with the legacy GBIF-shaped envelope.
+  id: string | number;
   canonical_name: string;
   display_name: string;
   markers: {

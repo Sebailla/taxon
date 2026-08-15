@@ -1,20 +1,17 @@
-/** UI contract tests for the path-aware Cascade.
+/** UI contract tests for the path-aware Cascade (7-fixed-tier rule).
 
-These tests cover the orthogonal UI behaviour that
-pathAware.test.tsx does not exercise directly:
+The cascade always renders exactly seven dropdowns:
+Biota, Kingdom, Phylum, Class, Order, Family, Genus. These
+tests cover the orthogonal UI behaviour:
 
-- Loading state per dropdown.
-- Empty children state at any depth.
+- Loading state per dropdown (the slot is disabled until the
+  parent snapshot lands).
+- Empty / leaf handling at any depth.
 - Inclusion-toggle forwarding to the species fetch.
-- Loading the root tier on mount.
-- Disabling the deepest dropdown while its children are in
-  flight.
-
-The mocks feed ``/path-children`` exclusively (the cascade no
-longer calls the legacy six rank-named endpoints).
+- Reset on parent change.
 */
 
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -78,14 +75,10 @@ describe("Cascade UI: loading and empty states", () => {
 
     render(<Cascade />);
 
-    // Root dropdown is disabled while the initial /api/kingdoms
-    // fetch is in flight (no mocked response yet).
     expect(
       screen.getByRole("combobox", { name: "Biota" }),
     ).toBeDisabled();
 
-    // Resolve the root fetch. /api/kingdoms returns the two
-    // CLB top-tier taxa (Biota, Viruses) under the new root tier.
     await act(async () => {
       resolveFetch!(
         mockFetchJson([
@@ -95,28 +88,27 @@ describe("Cascade UI: loading and empty states", () => {
       );
     });
 
-    // Now the root dropdown is enabled.
     expect(
       screen.getByRole("combobox", { name: "Biota" }),
     ).not.toBeDisabled();
   });
 
   it("renders 'No children' when the deepest taxon has no species children", async () => {
-    // Mock Animalia's children to return empty. The cascade
-    // classifies Animalia as a leaf (next_tiers = null) and
-    // skips the species fetch (children are not species-rank),
-    // then resets the species status to idle so the SpeciesList
-    // renders the empty state.
+    // Walk to Animalia; Animalia is a leaf with no children.
+    // The cascade renders the empty state under the species
+    // list slot. With the seven-fixed-tier rule, every slot
+    // remains rendered but disabled — the next-tier slot (Class
+    // here) shows "No class available" until the user picks a
+    // phylum with class children. Animalia is the deepest pick
+    // so the species list slot renders "No children.".
     globalThis.fetch = vi
       .fn()
-      // 1. /api/kingdoms (root tier).
       .mockResolvedValueOnce(
         mockFetchJson([
           taxon(1, "Biota", "biota"),
           taxon(2, "Viruses", "biota"),
         ]),
       )
-      // 2. /path-children?path=Biota.
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(1, "Biota", "biota"),
@@ -124,7 +116,7 @@ describe("Cascade UI: loading and empty states", () => {
           next_tiers: singleTier("kingdom", [taxon(10, "Animalia", "kingdom", 1)]),
         }),
       )
-      // 3. /path-children?path=Biota|Animalia — leaves.
+      // Animalia has no children at all.
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(10, "Animalia", "kingdom"),
@@ -136,10 +128,6 @@ describe("Cascade UI: loading and empty states", () => {
     const user = userEvent.setup();
     render(<Cascade />);
 
-    // Wait for the kingdom option to land in the DOM before
-    // attempting a select. ``findByRole("combobox")`` would
-    // return the disabled placeholder select and the next
-    // ``selectOptions`` call would fail.
     await screen.findByRole("option", { name: "Biota" });
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Biota" }),
@@ -147,35 +135,33 @@ describe("Cascade UI: loading and empty states", () => {
     );
     await screen.findByRole("option", { name: "Animalia" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Kingdom" }),
+      await screen.findByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
 
-    // Animalia is a leaf with no species children → the empty
-    // state renders.
+    // Animalia is a confirmed leaf — the species list slot
+    // renders the empty state. The seven-fixed-tier rule keeps
+    // Phylum / Class / Order / Family / Genus rendered but
+    // disabled (Phylum shows "No phylum available").
     expect(await screen.findByText("No children.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Phylum" }),
+    ).toBeDisabled();
   });
 });
 
 describe("Cascade UI: inclusion toggles", () => {
   it("lands the species list fetch when the deepest taxon is a confirmed genus", async () => {
-    // The chain for Gadus morhua is
-    //   Biota → Animalia → Chordata → subphylum Vertebrata → … → Gadus
-    // The path-aware cascade walks every segment the backend
-    // returns, so the test stubs the full chain plus the
-    // auto-fetched species list. ``mockResolvedValueOnce`` chains
-    // the responses in firing order so the test is deterministic
-    // regardless of which dropdown the user picks first.
+    // Arthropoda → Insecta → Coleoptera → Curculionidae →
+    // Sitophilus → species list.
     const fetchMock = vi
       .fn()
-      // 1. Initial root fetch via /api/kingdoms.
       .mockResolvedValueOnce(
         mockFetchJson([
           taxon(1, "Biota", "biota"),
           taxon(2, "Viruses", "biota"),
         ]),
       )
-      // 2. After picking Biota.
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(1, "Biota", "biota"),
@@ -183,46 +169,53 @@ describe("Cascade UI: inclusion toggles", () => {
           next_tiers: singleTier("kingdom", [taxon(10, "Animalia", "kingdom", 1)]),
         }),
       )
-      // 3. After picking Animalia.
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(10, "Animalia", "kingdom"),
-          children: [taxon(20, "Chordata", "phylum", 10)],
-          next_tiers: singleTier("phylum", [taxon(20, "Chordata", "phylum", 10)]),
+          children: [taxon(20, "Arthropoda", "phylum", 10)],
+          next_tiers: singleTier("phylum", [taxon(20, "Arthropoda", "phylum", 10)]),
         }),
       )
-      // 4. After picking Chordata → subphylum children (the
-      //    best-effort resolver emits one ``subphylum`` tier).
       .mockResolvedValueOnce(
         mockFetchJson({
-          parent: taxon(20, "Chordata", "phylum"),
-          children: [taxon(30, "Vertebrata", "subphylum", 20)],
-          next_tiers: singleTier("subphylum", [taxon(30, "Vertebrata", "subphylum", 20)]),
+          parent: taxon(20, "Arthropoda", "phylum"),
+          children: [taxon(30, "Insecta", "class", 20)],
+          next_tiers: singleTier("class", [taxon(30, "Insecta", "class", 20)]),
         }),
       )
-      // 5. After picking Vertebrata (from the "Subphylum" picker)
-      //    → genus Gadus (leaf).
       .mockResolvedValueOnce(
         mockFetchJson({
-          parent: taxon(30, "Vertebrata", "subphylum"),
-          children: [taxon(40, "Gadus", "genus", 30)],
-          next_tiers: singleTier("genus", [taxon(40, "Gadus", "genus", 30)]),
+          parent: taxon(30, "Insecta", "class"),
+          children: [taxon(40, "Coleoptera", "order", 30)],
+          next_tiers: singleTier("order", [taxon(40, "Coleoptera", "order", 30)]),
         }),
       )
-      // 6. After picking Gadus → species Gadus morhua (leaf).
       .mockResolvedValueOnce(
         mockFetchJson({
-          parent: taxon(40, "Gadus", "genus"),
-          children: [taxon(50, "Gadus morhua", "species", 40)],
+          parent: taxon(40, "Coleoptera", "order"),
+          children: [taxon(50, "Curculionidae", "family", 40)],
+          next_tiers: singleTier("family", [taxon(50, "Curculionidae", "family", 40)]),
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockFetchJson({
+          parent: taxon(50, "Curculionidae", "family"),
+          children: [taxon(60, "Sitophilus", "genus", 50)],
+          next_tiers: singleTier("genus", [taxon(60, "Sitophilus", "genus", 50)]),
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockFetchJson({
+          parent: taxon(60, "Sitophilus", "genus"),
+          children: [taxon(70, "Sitophilus granarius", "species", 60)],
           next_tiers: null,
         }),
       )
-      // 7. Auto-fetched species list for Gadus.
       .mockResolvedValueOnce(
         mockFetchJson({
           items: [
-            taxon(50, "Gadus morhua", "species", 40),
-            taxon(51, "Gadus ogac", "species", 40),
+            taxon(70, "Sitophilus granarius", "species", 60),
+            taxon(71, "Sitophilus oryzae", "species", 60),
           ],
           next_cursor: null,
         }),
@@ -232,11 +225,6 @@ describe("Cascade UI: inclusion toggles", () => {
     const user = userEvent.setup();
     render(<Cascade />);
 
-    // Wait for each option to land before selecting. The dropdown
-    // is rendered in the disabled state until the corresponding
-    // path-children response resolves, so a plain
-    // ``findByRole("combobox")`` would race the disabled
-    // placeholder.
     await screen.findByRole("option", { name: "Biota" });
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Biota" }),
@@ -247,29 +235,38 @@ describe("Cascade UI: inclusion toggles", () => {
       screen.getByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
-    await screen.findByRole("option", { name: "Chordata" });
+    await screen.findByRole("option", { name: "Arthropoda" });
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Phylum" }),
-      "Chordata",
+      "Arthropoda",
     );
-    // Chordata returns subphylum children under the "Subphylum" picker.
-    await screen.findByRole("option", { name: "Vertebrata" });
+    await screen.findByRole("option", { name: "Insecta" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Subphylum" }),
-      "Vertebrata",
+      screen.getByRole("combobox", { name: "Class" }),
+      "Insecta",
     );
-    await screen.findByRole("option", { name: "Gadus" });
+    await screen.findByRole("option", { name: "Coleoptera" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Genus" }),
-      "Gadus",
+      screen.getByRole("combobox", { name: "Order" }),
+      "Coleoptera",
     );
+    const familyDropdown = await screen.findByRole("combobox", { name: "Family" });
+    await waitFor(() => {
+      expect(
+        within(familyDropdown).getByRole("option", { name: "Curculionidae" }),
+      ).toBeInTheDocument();
+    });
+    await user.selectOptions(familyDropdown, "Curculionidae");
+    const genusDropdown = await screen.findByRole("combobox", { name: "Genus" });
+    await waitFor(() => {
+      expect(
+        within(genusDropdown).getByRole("option", { name: "Sitophilus" }),
+      ).toBeInTheDocument();
+    });
+    await user.selectOptions(genusDropdown, "Sitophilus");
 
-    // The cascade auto-loaded the species list once the user
-    // picked the genus. "Gadus morhua" appears in both the
-    // species list and the species dropdown; the list copy is
-    // the one we want.
-    const speciesList = await screen.findByRole("list");
-    expect(within(speciesList).getByText("Gadus morhua")).toBeInTheDocument();
-    expect(within(speciesList).getByText("Gadus ogac")).toBeInTheDocument();
+    const speciesList = await screen.findByRole("list", { name: /species list/i });
+    expect(within(speciesList).getByText("Sitophilus granarius")).toBeInTheDocument();
+    expect(within(speciesList).getByText("Sitophilus oryzae")).toBeInTheDocument();
   });
 });

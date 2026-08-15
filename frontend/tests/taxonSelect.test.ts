@@ -101,8 +101,10 @@ describe("TaxonSelectDetailSchema", () => {
   });
 
   it("rejects a payload with the wrong types", () => {
+    // id must be a string (CLB opaque ids like "5T6MX") or a
+    // number — anything else (e.g. an object) is rejected.
     const result = TaxonSelectDetailSchema.safeParse({
-      row: validRow({ id: "not-a-number" }),
+      row: validRow({ id: { nested: "object" } }),
       breadcrumb: [],
       parentSegments: [],
     });

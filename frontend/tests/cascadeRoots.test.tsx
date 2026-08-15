@@ -1,15 +1,10 @@
 /** Contract tests for the cascade root tier.
 
-The cascade frontend now shows the two top-tier CLB taxa
-(**Biota** + **Viruses**) as the first dropdown instead of
-the legacy kingdom list. ``fetchRoots`` resolves to
-``/api/kingdoms``; the legacy name ``fetchKingdoms`` is kept as a
-deprecated alias in ``api.ts`` so external callers keep working.
-
-The root tier always renders the ``Biota`` header in the dropdown
-label. Once the user picks Biota (or Viruses), the next dropdown
-shows the kingdom-rank children and is labelled **Kingdom** —
-the CLB cascade tier tuple's slot index 1.
+The cascade frontend renders **exactly seven fixed dropdowns**:
+Biota, Kingdom, Phylum, Class, Order, Family, Genus. The root
+dropdown is the Biota picker; the next picker after a Biota
+pick is the Kingdom dropdown populated with the CLB
+kingdom-rank children.
 */
 
 import { render, screen, waitFor } from "@testing-library/react";
@@ -18,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
 import type { TaxonResponse } from "../src/api";
+import { waitForEnabledOption } from "./test-helpers";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -61,8 +57,8 @@ describe("Cascade root tier", () => {
 
     render(<Cascade />);
 
-    // The first dropdown is labelled "Biota" (the cascade root
-    // tier) and lists both CLB top-tier taxa.
+    // The first dropdown is labelled "Biota" and lists both CLB
+    // top-tier taxa.
     const rootDropdown = await screen.findByRole("combobox", { name: "Biota" });
     await waitFor(() => {
       expect(screen.getByRole("option", { name: "Biota" })).toBeInTheDocument();
@@ -81,7 +77,7 @@ describe("Cascade root tier", () => {
           taxon(2, "Viruses", "biota"),
         ]),
       )
-      // 2. Pick Biota → children of Biota at rank=kingdom.
+      // 2. Pick Biota → kingdom-rank children.
       .mockResolvedValueOnce(
         mockFetchJson({
           parent: taxon(1, "Biota", "biota"),
@@ -108,12 +104,12 @@ describe("Cascade root tier", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota"),
       "Biota",
     );
 
-    // The next picker renders with the label "Kingdom" (the
-    // tier after Biota in the CLB cascade tuple).
+    // The next picker is labelled "Kingdom" — the second of the
+    // seven fixed dropdowns.
     const kingdomDropdown = await screen.findByRole("combobox", {
       name: "Kingdom",
     });
