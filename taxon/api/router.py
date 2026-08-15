@@ -17,6 +17,14 @@ frontend uses. Sub-PR 2C adds three more endpoints on top:
         Emits the 12 dispatch URLs for a resolved species, with
         ``{q}`` substituted via :func:`urllib.parse.quote_plus`.
 
+PR #58 (SQLite-only cascade) rewires the cascade endpoints
+(``/api/kingdoms``, ``/api/path-children``, ``/api/species-list``) to
+read from the local SQLite database via
+:mod:`taxon.api.sqlite_resolver`. The CLB client modules remain
+importable so legacy tests keep passing; the router itself no
+longer depends on them. Wire shape is preserved 100% so the
+cascade UI keeps working without frontend changes.
+
 The ``/_meta`` route is intentionally kept; it is the smoke check that
 the router is mounted at all and MUST NOT be removed by later sub-PRs.
 
@@ -48,7 +56,6 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from taxon.api.clb_path_children import list_path_children as clb_list_path_children
 from taxon.api.db import get_db
 from taxon.api.errors import AmbiguousError, NotFoundError
 from taxon.api.hierarchy import (
@@ -60,7 +67,6 @@ from taxon.api.hierarchy import (
 from taxon.api.schemas import (
     LinksResponse,
     MarkerFlags,
-    NextTier,
     PathChildrenEnvelope,
     SearchLinkItem,
     SpeciesListItem,
@@ -74,7 +80,15 @@ from taxon.api.species import (
     list_species_page,
     parse_include,
 )
-from taxon.checklistbank import ChecklistBankClient, ChecklistBankTaxon
+from taxon.api.sqlite_resolver import (
+    list_kingdoms as sqlite_list_kingdoms,
+)
+from taxon.api.sqlite_resolver import (
+    list_path_children as sqlite_list_path_children,
+)
+from taxon.api.sqlite_resolver import (
+    list_species_under_path as sqlite_list_species_under_path,
+)
 from taxon.schema import Taxon
 from taxon.search_links import SearchLink, build_search_links, load_templates
 
@@ -119,32 +133,33 @@ def path_children(
         Query(
             description=(
                 "Pipe-separated path of canonical names. The endpoint "
-                "walks the segments against the ChecklistBank ``COL2024`` "
-                "dataset and returns the direct children of the deepest "
-                "resolved taxon. CLB publishes children at off-tuple "
-                "intermediate ranks (infraphylum, parvphylum, megaclass, "
-                "subclass, suborder) so the resolver groups every child "
-                "by its actual rank label and emits one ``NextTier`` "
-                "per group in ``next_tiers``. The cascade UI renders "
-                "one dropdown per group with the dropdown label taken "
-                'from the rank itself ("Infraphylum", "Parvphylum", '
-                '"Megaclass", "Subclass", "Suborder"). Example: '
-                "?path=Animalia%7CChordata%7CVertebrata%7CGnathostomata"
+                "walks the segments against the local SQLite hierarchy "
+                "and returns the direct children of the deepest "
+                "resolved taxon. Off-tuple intermediate ranks "
+                "(infraphylum, parvphylum, megaclass, subclass, "
+                "suborder, subfamily, tribe, subtribe, infratribe) "
+                "fold into the parent display bucket via the "
+                "display-level resolver, so the walk keeps advancing "
+                "on real-world data shapes. The resolver groups "
+                "every child by its actual rank label and emits one "
+                "``NextTier`` per group in ``next_tiers``. The "
+                "cascade UI renders one dropdown per group with the "
+                "dropdown label taken from the rank itself. Example: "
+                "?path=Animalia%7CChordata%7CVertebrata"
             ),
             min_length=1,
         ),
     ],
-    clb: Annotated[ChecklistBankClient, Depends(_get_checklistbank_client)],
+    session: Annotated[Session, Depends(get_db)],
 ) -> PathChildrenEnvelope:
     """Return the children of the deepest taxon the path resolves to.
 
-    The resolver walks the path against ChecklistBank ``COL2024`` and
-    returns the direct children of the deepest resolved taxon. CLB
-    search has no ``higherTaxonKey`` filter; the resolver relies on
-    the ``rank=R`` anchor at each step to keep same-named taxa from
-    colliding at different depths. The first hit whose canonical
-    name matches the segment case-insensitively is the resolver's
-    match.
+    The resolver walks the path against the local SQLite hierarchy
+    and returns the direct children of the deepest resolved taxon.
+    Each segment is matched against a row whose ``display_level``
+    matches the expected bucket for the segment's position in the
+    path; the first match anchors the next segment on its ``id`` so
+    same-named taxa under different parents cannot collide.
 
     The children fetch drops the ``rank=`` filter and groups the
     response by the children's actual rank labels. The wire envelope
@@ -152,27 +167,10 @@ def path_children(
     cascade UI renders one dropdown per rank group.
     """
     segments = [segment for segment in path.split("|") if segment]
-    response = clb_list_path_children(segments, client=clb)
+    response = sqlite_list_path_children(session, segments)
     if response is None:
         raise NotFoundError(f"taxon not found: {segments[-1]!r}")
-    next_tiers = (
-        [
-            NextTier(
-                rank=tier.rank,
-                label=tier.label,
-                examples=list(tier.examples),
-                children=[_clb_taxon_to_taxon_response(child) for child in tier.children],
-            )
-            for tier in response.next_tiers
-        ]
-        if response.next_tiers is not None
-        else None
-    )
-    return PathChildrenEnvelope(
-        parent=_clb_taxon_to_taxon_response(response.parent),
-        children=[_clb_taxon_to_taxon_response(child) for child in response.children],
-        next_tiers=next_tiers,
-    )
+    return response
 
 
 @router.get(
@@ -185,18 +183,29 @@ def species_list(
         Query(
             description=(
                 "Pipe-separated path of canonical names. The endpoint "
-                "walks the segments against ChecklistBank ``COL2024`` and "
-                "returns the species children of the deepest resolved "
-                "taxon. The deepest segment must be a genus; the resolver "
-                "walks up the path to find its CLB id, then asks "
-                "``/tree/{id}/children?rank=species``. Example: "
-                "?path=Animalia%7CChordata%7CVertebrata%7CMammalia%7C"
-                "Carnivora%7CFelidae%7CPanthera"
+                "walks the segments against the local SQLite hierarchy "
+                "and returns the species-tier descendants of the "
+                "deepest resolved taxon. The deepest segment must be "
+                "a genus; the resolver walks up the path to find its "
+                "row, then asks for every descendant at the species "
+                "display bucket (species, subspecies, variety, form). "
+                "Example: ?path=Animalia%7CChordata%7CVertebrata%7C"
+                "Mammalia%7CCarnivora%7CFelidae%7CPanthera"
             ),
             min_length=1,
         ),
     ],
-    clb: Annotated[ChecklistBankClient, Depends(_get_checklistbank_client)],
+    session: Annotated[Session, Depends(get_db)],
+    include: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Comma-separated inclusion classes "
+                "(synonyms, extinct, uncertain, unassigned). "
+                "Default is accepted-only."
+            )
+        ),
+    ] = None,
     cursor: Annotated[
         str | None,
         Query(description="Pagination cursor returned in next_cursor."),
@@ -204,85 +213,42 @@ def species_list(
 ) -> SpeciesListResponse:
     """Return the species list at the deepest taxon the path resolves to.
 
-    The path-aware resolver walks the segments and asks CLB for the
-    children of the deepest matched taxon. The cascade UI consumes
-    this once the user picks a genus — the species list fills the
-    leaf panel without further interaction.
+    The path-aware resolver walks the segments against the local
+    SQLite hierarchy and asks for every descendant at the species
+    display bucket. The cascade UI consumes this once the user
+    picks a genus — the species list fills the leaf panel without
+    further interaction.
+
+    The ``include`` query parameter widens the result set per the
+    inclusion-filters spec; unknown values are silently ignored.
+    The ``cursor`` query parameter is the pagination cursor
+    returned in ``next_cursor`` when the result set exceeds the
+    500-row cap.
     """
-    _ = cursor  # Pagination is not implemented for the CLB-backed path yet.
     segments = [segment for segment in path.split("|") if segment]
-    path_response = clb_list_path_children(segments, client=clb)
-    if path_response is None:
-        raise NotFoundError(f"taxon not found: {segments[-1]!r}")
-    children = clb.get_children(
-        path_response.parent.taxon_id,
-        limit=300,
-        rank="species",
+    return sqlite_list_species_under_path(
+        session,
+        segments,
+        include=include,
+        cursor=cursor,
     )
-    items = [
-        SpeciesListItem(
-            id=child.taxon_id,
-            name=child.canonical_name,
-            display_name=child.scientific_name,
-            rank=child.rank.lower(),
-            parent_id=child.parent_id,
-            parent_segments=segments,
-        )
-        for child in children
-    ]
-    return SpeciesListResponse(items=items, next_cursor=None)
 
 
 @router.get("/kingdoms", response_model=list[TaxonResponse])
 def list_kingdoms(
-    clb: Annotated[ChecklistBankClient, Depends(_get_checklistbank_client)],
+    session: Annotated[Session, Depends(get_db)],
 ) -> list[TaxonResponse]:
-    """Return the two root-tier taxa from ChecklistBank ``COL2024``.
+    """Return the synthesized Biota + Viruses root-tier taxa.
 
-    CLB exposes exactly two roots: ``Biota`` (id ``"5T6MX"``, parent
-    of every cellular kingdom) and ``Viruses`` (id ``"V"``, parent of
-    the virus realms). The endpoint queries ``/dataset/COL2024/tree``
-    and returns both rows so the cascade UI's first dropdown shows
-    one row per root.
+    The cascade UI's first dropdown shows exactly two rows: Biota
+    (id ``"5T6MX"``, parent of every cellular kingdom) and Viruses
+    (id ``"V"``, parent of the virus realms). The local SQLite
+    does not carry these rows (the GBIF backbone ships neither
+    Viruses nor a true Biota superdomain), so the endpoint
+    synthesises both rows server-side with the CLB-canonical ids
+    so the cascade UI keeps working without frontend changes.
     """
-    rows = clb.list_roots()
-    rows.sort(key=lambda r: r.canonical_name.lower())
-    return [_clb_taxon_to_taxon_response(row) for row in rows]
-
-
-def _get_checklistbank_client() -> ChecklistBankClient:
-    """FastAPI dependency that yields the request-scoped CLB client.
-
-    The router takes a fresh client per request so tests can
-    override the dependency and inject a transport-stubbed
-    client. Production callers get a default
-    :class:`ChecklistBankClient` that hits the public
-    ChecklistBank API directly.
-    """
-    return ChecklistBankClient()
-
-
-def _clb_taxon_to_taxon_response(taxon: ChecklistBankTaxon) -> TaxonResponse:
-    """Bridge a :class:`ChecklistBankTaxon` to the public
-    :class:`TaxonResponse`.
-
-    CLB returns opaque string ids (``"N"``, ``"5T6MX"``, ...) whereas
-    the legacy local SQLite rows emit autoincrement ``int`` ids.
-    The widened response schema (``id: int | str``) carries both
-    shapes so the cascade UI does not need to branch on backend.
-    """
-    rank = taxon.rank.lower() if taxon.rank else ""
-    return TaxonResponse(
-        id=taxon.taxon_id,
-        name=taxon.canonical_name,
-        display_name=taxon.scientific_name or taxon.canonical_name,
-        rank=rank,
-        parent_id=taxon.parent_id,
-        is_synonym=(taxon.status is not None and taxon.status.lower() != "accepted"),
-        is_extinct=False,
-        is_uncertain=False,
-        is_unassigned=False,
-    )
+    return sqlite_list_kingdoms(session)
 
 
 def _resolve_or_404(session: Session, segments: list[str]) -> TaxonRow:

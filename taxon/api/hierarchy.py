@@ -21,6 +21,28 @@ rather than a Python ``str.lower()`` round-trip; SQLite's default
 ``LOWER()`` keeps the comparison in one place and is index-friendly via
 the planner's deterministic text handling on small result sets (the
 hierarchy endpoints touch only the children of one parent at a time).
+
+PR #58 (SQLite-only cascade)
+----------------------------
+The PR adds three display-level-aware helpers:
+
+- :func:`_intermediate_ranks_for` — derive the set of "off-tuple"
+  ranks that sit inside a display bucket (e.g. every rank that maps
+  to ``"family"`` except ``"family"`` itself). The mapping is read
+  directly from :data:`taxon.taxonomy.RANK_TO_DISPLAY_LEVEL` so the
+  whitelist stays the single source of truth.
+- :func:`resolve_path_by_display_level` — descendant lookup that
+  matches each path segment against ``display_level == bucket`` and
+  verifies the parent chain is contiguous across matched nodes.
+- :func:`list_children_by_display_level` — children grouped by their
+  actual rank label, used by the roll-up helpers in
+  :mod:`taxon.api.sqlite_resolver`.
+
+The cascade walk was historically projected onto a fixed 9-tier tuple
+(``biota, kingdom, phylum, subphylum, class, order, family, genus,
+species``) and dead-ended at every off-tuple rank. The display-level
+helpers fold every intermediate rank into the parent bucket so the
+walk keeps advancing on real-world data shapes.
 """
 
 from __future__ import annotations
@@ -32,6 +54,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from taxon.schema import Taxon
+from taxon.taxonomy import RANK_TO_DISPLAY_LEVEL
 
 # Canonical rank order used by the cascade.
 PATH_RANKS: Final[tuple[str, ...]] = (
@@ -167,7 +190,186 @@ __all__ = [
     "PATH_RANKS",
     "SPECIES_RANK",
     "TaxonRow",
+    "_intermediate_ranks_for",
     "list_children",
+    "list_children_by_display_level",
     "list_root_taxa",
     "resolve_path",
+    "resolve_path_by_display_level",
 ]
+
+
+# ---------------------------------------------------------------------------
+# PR #58 — display-level-aware resolvers.
+# ---------------------------------------------------------------------------
+
+# The cascade buckets in the order the UI walks them. ``realm`` sits at
+# the top (above kingdom) and ``species`` at the bottom.
+_DISPLAY_LEVELS_IN_ORDER: Final[tuple[str, ...]] = (
+    "realm",
+    "kingdom",
+    "phylum",
+    "class",
+    "order",
+    "family",
+    "genus",
+    "species",
+)
+
+
+def _intermediate_ranks_for(level: str) -> set[str]:
+    """Return the set of ranks whose ``display_level`` equals ``level`` excluding ``level`` itself.
+
+    Derived from :data:`taxon.taxonomy.RANK_TO_DISPLAY_LEVEL` so the
+    whitelist stays the single source of truth. Used by the
+    roll-up rules in :mod:`taxon.api.sqlite_resolver` to detect
+    "off-tuple" intermediate ranks (e.g. ``subphylum`` inside the
+    ``phylum`` bucket) so the cascade walk can hide them inside
+    intermediate hops instead of surfacing them as separate dropdowns.
+
+    The result is intentionally a ``set[str]`` so membership tests
+    run in constant time at the resolver hot-path.
+    """
+    bucket = {rank for rank, lvl in RANK_TO_DISPLAY_LEVEL.items() if lvl == level}
+    bucket.discard(level)
+    return bucket
+
+
+def _path_buckets(segments: list[str]) -> list[str]:
+    """Map each path segment to its display-level bucket.
+
+    Kept for unit-testing the cascade tuple semantics; the actual
+    resolver computes the target bucket per-segment from the
+    previous matched row's display_level. Returns the cascaded
+    bucket sequence the resolver would consume: the first segment
+    anchors on ``kingdom``, every subsequent segment advances one
+    tier, and the leaf tier (``species``) is sticky so off-tuple
+    intermediates at the species bucket (subspecies / variety /
+    form) keep resolving through the same anchor.
+    """
+    if not segments:
+        return []
+    last_index: int | None = None
+    buckets: list[str] = []
+    for _ in segments:
+        if last_index is None:
+            target = _DISPLAY_LEVELS_IN_ORDER.index("kingdom")
+        elif last_index >= len(_DISPLAY_LEVELS_IN_ORDER) - 1:
+            target = last_index
+        else:
+            target = last_index + 1
+        buckets.append(_DISPLAY_LEVELS_IN_ORDER[target])
+        last_index = target
+    return buckets
+
+
+def _candidate_bucket_indices(last_bucket_index: int | None) -> list[int]:
+    """Return the bucket indices to try for the next path segment.
+
+    The cascade tuple is the source of truth for tier ordering
+    (``realm, kingdom, phylum, class, order, family, genus, species``).
+    The first segment anchors on ``kingdom`` because the cascade
+    UI's first queryable tier is kingdom (Biota / Viruses come from
+    the synthesised root dropdown, never a path segment).
+
+    Each subsequent segment tries two buckets in priority order:
+
+    1. The bucket one tier below the previously-matched row's
+       bucket — the canonical cascade walk.
+    2. The same bucket as the previously-matched row — the
+       off-tuple intermediate walk (e.g. subphylum / infraphylum /
+       parvphylum / microphylum / megaclass under phylum;
+       superfamily / subfamily / tribe / subtribe / infratribe under
+       family).
+
+    The resolver picks the first match; the second bucket is the
+    "same tier, off-tuple intermediate" fallback. Once the resolver
+    reaches the leaf tier (``species``), every further segment also
+    anchors on ``species`` so subspecies / variety / form
+    descendants keep resolving through the same anchor.
+    """
+    if last_bucket_index is None:
+        return [_DISPLAY_LEVELS_IN_ORDER.index("kingdom")]
+    if last_bucket_index >= len(_DISPLAY_LEVELS_IN_ORDER) - 1:
+        return [last_bucket_index]
+    return [last_bucket_index + 1, last_bucket_index]
+
+
+def resolve_path_by_display_level(
+    session: Session,
+    segments: list[str],
+) -> TaxonRow | None:
+    """Resolve ``segments`` against the cascade via display-level anchors.
+
+    Each segment is matched against a row whose ``display_level`` is
+    either one tier below the previously-matched row's bucket OR the
+    same bucket (for off-tuple intermediates), and whose ``name``
+    matches the segment case-insensitively. The first match anchors
+    the next segment on its ``id`` so same-named taxa under
+    different parents cannot collide.
+
+    Returns the deepest matched row, or ``None`` when any segment
+    fails to resolve. The match is unanchored on the first segment
+    (the parent of the first tier is unknown — the resolver cannot
+    anchor "Animalia" against itself).
+    """
+    if not segments:
+        return None
+
+    parent_id: int | None = None
+    current: TaxonRow | None = None
+    last_bucket_index: int | None = None
+
+    for segment in segments:
+        match: Taxon | None = None
+        for bucket_index in _candidate_bucket_indices(last_bucket_index):
+            bucket = _DISPLAY_LEVELS_IN_ORDER[bucket_index]
+            stmt = (
+                select(Taxon)
+                .where(func.lower(Taxon.name) == segment.lower())
+                .where(func.lower(Taxon.display_level) == bucket.lower())
+            )
+            if parent_id is not None:
+                stmt = stmt.where(Taxon.parent_id == parent_id)
+            candidate = session.scalars(stmt).first()
+            if candidate is not None:
+                match = candidate
+                last_bucket_index = bucket_index
+                break
+        if match is None:
+            return None
+        current = _to_row(match)
+        parent_id = current.id
+
+    return current
+
+
+def list_children_by_display_level(
+    session: Session,
+    parent_id: int,
+    level: str,
+) -> dict[str, list[TaxonRow]]:
+    """Group the direct children of ``parent_id`` whose ``display_level == level`` by their actual rank.
+
+    Returns a dict keyed by lower-cased rank label; each value is the
+    list of children at that rank, ordered by canonical ``name``
+    (case-insensitive). The cascade UI reads the per-rank groups to
+    render one dropdown per group with the rank label as the dropdown
+    caption.
+
+    The function never returns ``None``: when the parent has no
+    matching children the result is an empty dict and the caller
+    renders the leaf dropdown. ``level`` is matched case-insensitively
+    to mirror the rest of the API.
+    """
+    stmt = (
+        select(Taxon)
+        .where(Taxon.parent_id == parent_id)
+        .where(func.lower(Taxon.display_level) == level.lower())
+        .order_by(func.lower(Taxon.name), Taxon.name)
+    )
+    grouped: dict[str, list[TaxonRow]] = {}
+    for child in session.scalars(stmt).all():
+        key = child.rank.lower()
+        grouped.setdefault(key, []).append(_to_row(child))
+    return grouped
