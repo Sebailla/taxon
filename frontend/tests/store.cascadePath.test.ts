@@ -30,18 +30,13 @@ describe("cascadePath store", () => {
   });
 
   it("setPath replaces the path; subscribers fire on every change", () => {
-    const subscriber = (
-      path: string[],
-      prev: string[],
-    ): void => {
-      // Capture each transition for the assertion below.
-      subscriberCalls.push({ path: [...path], prev: [...prev] });
-    };
     const subscriberCalls: Array<{ path: string[]; prev: string[] }> = [];
-    const unsub = useCascadePath.subscribe(
-      (state) => state.path,
-      (path, prev) => subscriber(path, prev),
-    );
+    const unsub = useCascadePath.subscribe((state, prev) => {
+      // Only capture when the path actually changed (the store
+      // returns the same reference for no-op replaces).
+      if (state.path === prev.path) return;
+      subscriberCalls.push({ path: [...state.path], prev: [...prev.path] });
+    });
 
     try {
       useCascadePath.getState().setPath(["A"]);
@@ -69,12 +64,9 @@ describe("cascadePath store", () => {
     // The subscriber must not fire on a no-op replace; otherwise the
     // App's effect would re-fetch for the same path on every render.
     let calls = 0;
-    const unsub = useCascadePath.subscribe(
-      (state) => state.path,
-      () => {
-        calls += 1;
-      },
-    );
+    const unsub = useCascadePath.subscribe(() => {
+      calls += 1;
+    });
     try {
       useCascadePath.getState().setPath(["X"]);
       const firstCount = calls;
