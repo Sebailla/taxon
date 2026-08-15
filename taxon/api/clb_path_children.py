@@ -313,9 +313,18 @@ def _children_for(
     subphylum / infraphylum / parvphylum / megaclass children at
     all), the resolver keeps the historical collapse to a single
     ``class`` tier so the cascade UI does not show an extra empty
-    picker. When the phylum has any non-class children (subphylum,
-    infraphylum, etc.) there is no collapse — the children groups
-    themselves encode the right number of tiers.
+    picker.
+
+    Phylum class aggregation (this PR): when the phylum has
+    subphylum children, the resolver descends into every subphylum
+    and aggregates the class-rank children across them. The wire
+    envelope exposes a single ``class`` tier so the cascade UI
+    renders one dropdown with every class under the phylum. The
+    inter-tier intermediates (subphylum, infraphylum, parvphylum,
+    megaclass, ...) are not exposed as dropdowns — they only
+    shape the path internally. The same aggregation rule applies
+    to every parent that returns non-class ranks in addition to
+    class-rank children.
 
     When the children list is empty, returns ``([], {}, None)`` so
     the cascade UI renders the leaf dropdown and the species-fetch
@@ -336,9 +345,42 @@ def _children_for(
             order.append(rank_key)
         grouped[rank_key].append(child)
 
+    parent_rank = (parent.rank or "").lower()
+
+    # Phylum class aggregation: when the phylum has subphylum
+    # children, recurse into every subphylum and aggregate the
+    # class-rank rows. The wire envelope exposes a single "class"
+    # tier; the inter-tier intermediates stay hidden inside the
+    # path walk.
+    if parent_rank == "phylum" and "subphylum" in grouped:
+        aggregated_classes: list[ChecklistBankTaxon] = []
+        for subphylum in grouped["subphylum"]:
+            sub_children = client.get_children(subphylum.taxon_id)
+            for sub_child in sub_children:
+                sub_rank = (sub_child.rank or "").lower()
+                # Infraphylum / parvphylum / megaclass may sit
+                # between subphylum and class for some phyla.
+                # Recurse one more level to fold them in.
+                if sub_rank in ("infraphylum", "parvphylum", "megaclass"):
+                    for deeper_child in client.get_children(sub_child.taxon_id):
+                        if (deeper_child.rank or "").lower() == "class":
+                            aggregated_classes.append(deeper_child)
+                elif sub_rank == "class":
+                    aggregated_classes.append(sub_child)
+        if aggregated_classes:
+            aggregated_grouped: dict[str, list[ChecklistBankTaxon]] = {
+                "class": aggregated_classes,
+            }
+            tiers = [_build_tier("class", aggregated_classes)]
+            return list(aggregated_classes), aggregated_grouped, tiers
+        # Fallback to the original phylum-tier children when no
+        # class-rank rows were found anywhere in the subphyla —
+        # preserves the historical "show what we have" behaviour.
+        tiers = [_build_tier(rank_key, grouped[rank_key]) for rank_key in order]
+        return list(all_children), grouped, tiers
+
     # Subphylum collapse rule (PR #2b): a phylum whose only
     # children are class-rank collapses to a single class tier.
-    parent_rank = (parent.rank or "").lower()
     if parent_rank == "phylum" and len(grouped) == 1 and "class" in grouped:
         # Already collapsed: only the "class" group exists. Emit
         # one NextTier per the existing rule so the UI does not

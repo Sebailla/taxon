@@ -698,12 +698,18 @@ def test_path_children_with_off_tuple_chain_returns_multiple_tiers() -> None:
     client = _StubClient(transport)
     app = _app_with_client(client)
     with _client(app) as test_client:
-        # Step 1: Chordata emits subphylum children.
+        # Step 1: Chordata (a phylum with subphylum children)
+        # triggers the phylum class aggregation rule — the
+        # resolver descends into Vertebrata and aggregates its
+        # class-rank children into a single ``class`` tier.
         response = test_client.get("/api/path-children?path=Animalia%7CChordata")
     assert response.status_code == 200
     body = response.json()
     assert "next_tiers" in body
-    assert [tier["rank"] for tier in body["next_tiers"]] == ["subphylum"]
+    assert [tier["rank"] for tier in body["next_tiers"]] == ["class"]
+    # The aggregated tier surfaces Mammalia (the only class-rank
+    # child of Vertebrata the mock seeds).
+    assert [c["name"] for c in body["next_tiers"][0]["children"]] == ["Mammalia"]
 
     with _client(app) as test_client:
         # Step 2: Vertebrata emits infraphylum + class.

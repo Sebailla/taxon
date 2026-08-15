@@ -960,12 +960,36 @@ def test_children_for_groups_three_intermediate_ranks() -> None:
     assert response.next_tiers is None
 
     # Walk the chain step by step and verify each tier grouping.
+    #
+    # Phylum class aggregation: when a phylum has subphylum
+    # children, the resolver descends into every subphylum and
+    # aggregates the class-rank children into a single ``class``
+    # tier. The wire envelope exposes only ``class`` for
+    # Chordata — the subphylum hierarchy stays hidden inside
+    # the path walk.
     chordata_response = clb_path_children.list_path_children(
         ["Animalia", "Chordata"], client=client
     )
     assert chordata_response is not None
-    assert {tier.rank for tier in chordata_response.next_tiers or []} == {"subphylum"}
+    assert {tier.rank for tier in chordata_response.next_tiers or []} == {"class"}
 
+    # The aggregated class tier includes every class under every
+    # subphylum of Chordata. The Panthera chain above seeded
+    # Mammalia under Tetrapoda; the chain also seeded Actinopterygii
+    # (a class under Gnathostomata / Osteichthyes) so the aggregated
+    # tier covers at least Mammalia + Actinopterygii.
+    assert chordata_response is not None
+    chordata_class_names = {
+        c.canonical_name
+        for tier in chordata_response.next_tiers or []
+        for c in tier.children
+    }
+    assert "Mammalia" in chordata_class_names
+
+    # Vertebrata itself is a subphylum — its children are the
+    # infraphylum + class tier pairs. The aggregation rule does
+    # not apply to non-phylum parents; the resolver still emits
+    # one tier per CLB rank group.
     vertebrata_response = clb_path_children.list_path_children(
         ["Animalia", "Chordata", "Vertebrata"], client=client
     )
