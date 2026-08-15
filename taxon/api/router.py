@@ -63,6 +63,7 @@ from taxon.api.hierarchy import (
     TaxonRow,
     list_children,
     resolve_path,
+    resolve_path_by_display_level,
 )
 from taxon.api.schemas import (
     LinksResponse,
@@ -72,6 +73,7 @@ from taxon.api.schemas import (
     SpeciesListItem,
     SpeciesListResponse,
     SpeciesLookupResponse,
+    TaxonLinksResponse,
     TaxonResponse,
 )
 from taxon.api.species import (
@@ -628,6 +630,83 @@ def species_links(
     substituted = build_search_links(taxon.name, templates)
     return LinksResponse(
         species=_species_response(session, taxon),
+        links=[
+            SearchLinkItem(source=link.source, label=link.label, url=link.url)
+            for link in substituted
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-taxon dispatch endpoint (breadcrumb-dinamico PR1)
+# ---------------------------------------------------------------------------
+
+
+# Hard cap on the number of cascade-path segments the breadcrumb-taxon's
+# ``/taxon-links`` endpoint accepts. The cascade tuple has exactly seven
+# display buckets (kingdom, phylum, class, order, family, genus, species),
+# so off-tuple intermediates plus the deepest bucket yield up to seven
+# segments; an eighth indicates malformed input or an attempted route
+# collision with the species-links endpoint.
+_TAXON_LINKS_MAX_SEGMENTS: int = 7
+
+
+@router.get(
+    "/{path:path}/taxon-links",
+    response_model=TaxonLinksResponse,
+)
+def taxon_links(
+    path: Annotated[
+        str,
+        Path(
+            description=(
+                "Pipe-separated path of canonical names. The endpoint "
+                "walks the segments against the local SQLite hierarchy "
+                "via the display-level resolver, then emits the 13 "
+                "search-source URLs substituted with the deepest "
+                "resolved taxon's canonical name. The path MUST contain "
+                "between one and seven segments; eight or more returns "
+                "404. The deepest segment may sit at any rank from "
+                "kingdom through genus. Example: ``Animalia%7CChordata`` "
+                "resolves to the phylum ``Chordata``."
+            ),
+            min_length=1,
+        ),
+    ],
+    session: Annotated[Session, Depends(get_db)],
+) -> TaxonLinksResponse:
+    """Emit the 13 dispatch URLs for the deepest resolved taxon.
+
+    The path is walked via :func:`resolve_path_by_display_level` so
+    off-tuple intermediates (subphylum, infraphylum, subfamily, ...)
+    fold into the parent bucket and the walk keeps advancing on
+    real-world data shapes. The substitution target is the canonical
+    :attr:`Taxon.name` -- never :attr:`Taxon.display_name` -- so
+    author citations never leak into the emitted URLs.
+
+    The seven-segment cap is enforced before the resolver so a path
+    longer than the cascade tuple can never reach the database. 404
+    is the chosen status (not 422) so the breadcrumb-taxon's failure
+    mode mirrors every other 404 in the cascade surface.
+
+    The route is registered AFTER ``/kingdoms``, ``/path-children``,
+    and the species-links route so the ``{path:path}`` catch-all does
+    NOT shadow those endpoints.
+    """
+    segments = [segment for segment in path.split("|") if segment]
+    if not (1 <= len(segments) <= _TAXON_LINKS_MAX_SEGMENTS):
+        raise NotFoundError(
+            f"path has {len(segments)} segments; max is {_TAXON_LINKS_MAX_SEGMENTS}"
+        )
+
+    taxon = resolve_path_by_display_level(session, segments)
+    if taxon is None:
+        raise NotFoundError(f"taxon not found: {segments[-1]!r}")
+
+    templates = load_templates(_TEMPLATES_PATH)
+    substituted = build_search_links(taxon.name, templates)
+    return TaxonLinksResponse(
+        taxon=TaxonResponse.model_validate(taxon),
         links=[
             SearchLinkItem(source=link.source, label=link.label, url=link.url)
             for link in substituted
