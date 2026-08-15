@@ -1,51 +1,56 @@
 /** Cascade — the path-aware cascade against the ChecklistBank backend.
 
-The Cascade renders one dropdown per tier group the CLB resolver
-served for the current path. CLB publishes children at off-tuple
-intermediate ranks (``infraphylum``, ``parvphylum``,
-``megaclass``, ``subclass``, ``suborder``) so the legacy locked
-9-tier tuple projection dead-ended at any off-tuple tier
-(Issue #43). The new resolver fetches children with no rank
-filter, groups them by their actual CLB rank, and emits
-``next_tiers`` (one ``NextTier`` per rank group) in the wire
-envelope. The cascade renders one dropdown per entry in
-``next_tiers``; the dropdown label comes from the tier's own
-``label`` field (capitalised from the CLB rank — "Infraphylum",
-"Parvphylum", "Megaclass", "Subclass", "Suborder"). The
-subphylum collapse rule (PR #2b) is preserved at the phylum
-tier: when the phylum has only class-rank children, the resolver
-emits a single ``class`` tier so the UI does not show an empty
-subphylum picker.
+The Cascade renders **exactly 7 fixed dropdowns** in this order:
+
+  1. Biota   — populated from ``GET /api/kingdoms``.
+  2. Kingdom — kingdom-rank children of the picked Biota.
+  3. Phylum  — phylum-rank children of the picked Kingdom.
+  4. Class   — class-rank children of the picked Phylum.
+  5. Order   — order-rank children of the picked Class.
+  6. Family  — family-rank children of the picked Order.
+  7. Genus   — genus-rank children of the picked Family.
+
+When a parent has no children at the rank the next dropdown
+expects, that dropdown stays rendered but is **disabled** with a
+"No <rank> available" placeholder. CoL inter-tier intermediates
+(subphylum, infraphylum, parvphylum, megaclass, subclass,
+suborder) are never exposed as dropdowns — they only shape the
+path the backend walks internally. The phylum-class aggregation
+rule (this PR) makes the backend descend into every subphylum
+under a phylum and aggregate the class-rank children into a
+single ``class`` tier so the cascade UI renders one dropdown
+with every class under the phylum regardless of the subphylum
+hierarchy.
 
 State (see ``Cascade.state.ts``):
 
 - ``path`` — the dense list of canonical names the user has
-  picked so far. The empty path means "show the root
-  Biota/Viruses dropdown".
-- ``levelByPath`` — snapshot per path segment. The cascade reads
-  the keys in order to render N dropdowns. Picking a segment
-  extends the path; the next /path-children call lands in a
-  new snapshot under the new deepest key.
+  picked so far. The empty path means "show the Biota/Viruses
+  dropdown".
+- ``levelByPath`` — snapshot per path segment. The cascade
+  reads each snapshot's ``next_tiers`` to find the rank group
+  the next dropdown expects.
 - ``species`` — loaded separately when the deepest segment has
-  no children (the cascade reached a genus row).
+  species-rank children (``next_tiers === null`` and the
+  snapshot contains at least one species row).
 
 Key invariants:
 
 - Picking a segment updates the path; the next /path-children
-  call fires with the cumulative path; the new dropdown renders
-  with the response's ``next_tiers``.
-- ``next_tiers`` is ``null`` (the deepest taxon has no
-  children at any rank), an empty array (defensive — backend
-  shouldn't emit this), or a list of ``NextTier`` records. The
-  species list takes over when ``next_tiers`` is ``null``.
+  call fires with the cumulative path; the new snapshot is
+  cached under the new deepest key.
+- Each dropdown looks up its tier by ``rank === "<expected-rank>"``
+  in the parent snapshot's ``next_tiers``. When the tier is
+  missing (or the parent snapshot is still loading) the dropdown
+  renders disabled.
 - Changing a parent segment clears every child snapshot so no
   stale state leaks across picks.
 - In-flight requests are aborted when a new selection supersedes
   them. ``apiGet`` swallows the AbortError so the component does
   not need a try/catch.
 - Each dropdown carries a visible label AND an ``aria-label``.
-  Disabled dropdowns use ``aria-disabled`` so screen readers
-  announce the unavailability.
+  Disabled dropdowns use ``disabled`` so screen readers announce
+  the unavailability.
 - The previous ``disabled → enabled`` focus behaviour is kept
   per PR #18's a11y followup.
 */
@@ -69,6 +74,22 @@ import {
   fetchSpeciesList,
 } from "../api";
 
+/** The seven fixed tier slots the cascade renders, in order. */
+const FIXED_TIERS: ReadonlyArray<{
+  /** CLB rank string the parent snapshot must expose in ``next_tiers``. */
+  readonly rank: string;
+  /** User-facing dropdown label. */
+  readonly label: string;
+}> = [
+  { rank: "biota", label: "Biota" },
+  { rank: "kingdom", label: "Kingdom" },
+  { rank: "phylum", label: "Phylum" },
+  { rank: "class", label: "Class" },
+  { rank: "order", label: "Order" },
+  { rank: "family", label: "Family" },
+  { rank: "genus", label: "Genus" },
+] as const;
+
 export function Cascade(): JSX.Element {
   const [state, dispatch] = useReducer(cascadeReducer, INITIAL);
 
@@ -76,17 +97,8 @@ export function Cascade(): JSX.Element {
   // the deepest resolved taxon. Abort the in-flight call when a
   // new selection supersedes it.
   //
-  // The empty path is the cascade root. Two paths lead here:
-  //
-  // 1. **Path = []** — fetch the cascade roots via
-  //    ``/api/kingdoms`` (CLB returns Biota + Viruses). The
-  //    ``next_tiers`` for the root snapshot is a single "kingdom"
-  //    tier so the renderer can render the second dropdown
-  //    labelled "Kingdom" once the user picks Biota.
-  // 2. **Path = [biota-name]`` — fetch the children of the
-  //    picked root via ``/api/path-children?path=<biota-name>``;
-  //    the response carries the kingdoms (or the virus realms,
-  //    if Viruses was picked).
+  // The empty path is the cascade root. The roots come from
+  // ``/api/kingdoms`` (CLB returns Biota + Viruses).
   //
   // Both paths share the ``onSuccess`` / ``onError`` callbacks
   // so the dispatch logic stays DRY.
@@ -115,11 +127,9 @@ export function Cascade(): JSX.Element {
       void fetchRoots({ signal: ctrl.signal }).then((result) => {
         if (result.status === "ok") {
           // CLB returns the two top-tier taxa (Biota, Viruses).
-          // The next dropdown picks a kingdom from the Biota
-          // tree, so we wrap the roots in a single "kingdom"
-          // tier here; the backend's ``/api/path-children``
-          // calls will report their own tiers for everything
-          // below.
+          // Wrap them in a single "kingdom" tier so the dropdown
+          // for the picked Biota can render kingdom-rank
+          // children on the next /path-children call.
           onSuccess(result.data, [
             {
               rank: "kingdom",
@@ -146,28 +156,43 @@ export function Cascade(): JSX.Element {
     return () => ctrl.abort();
   }, [state.path]);
 
-  // When the deepest snapshot has ``next_tiers === null`` the
-  // cascade has reached a leaf — the deepest taxon has no
-  // children at any rank. Fetch the species list directly via
-  // the path-aware /api/species-list endpoint so the SpeciesList
-  // below can render the rows with the inclusion-filter support
-  // the legacy build landed.
+  // When the deepest snapshot is a confirmed leaf (no children
+  // at any rank) AND the deepest taxon is a genus (its children
+  // include species-rank rows), fetch the species list directly
+  // via the path-aware /api/species-list endpoint so the
+  // SpeciesList below can render the rows with the
+  // inclusion-filter support the legacy build landed.
   useEffect(() => {
     if (state.path.length === 0) return;
     const key = pathKey(state.path);
     const snapshot = state.levelByPath[key];
     if (snapshot === undefined) return;
     // Only fetch the species list when the deepest snapshot is
-    // a confirmed leaf (``next_tiers === null``). When the
-    // tiers are an array we are not at a leaf yet; when
-    // tiers is undefined the snapshot is the loading
-    // placeholder and the fetch is still in flight. Both
-    // cases early-return after resetting the species status
-    // so the SpeciesList does not stay stuck in the "Loading
-    // children…" placeholder.
-    if (snapshot.nextTiers !== null) {
+    // a confirmed leaf. The CLB resolver can return any of:
+    //
+    // - ``null`` (no children at all — confirmed leaf),
+    // - ``[]`` (children but no recognised next tier — leaf),
+    // - ``[{rank: "species", ...}]`` (the genus has species
+    //   children wrapped in a species tier — leaf for our
+    //   seven-fixed-tier cascade).
+    //
+    // Any other shape (a non-species tier) means the deepest
+    // taxon is NOT a leaf yet, so the species list stays idle.
+    const isLeaf =
+      snapshot.nextTiers === null ||
+      snapshot.nextTiers === undefined ||
+      snapshot.nextTiers.length === 0 ||
+      snapshot.nextTiers.every((tier) => tier.rank === "species");
+    if (!isLeaf) {
       dispatch({ type: "set-species-status", status: "idle" });
       return;
+    }
+    // Leaf with no species-rank children: reset the species
+    // status to ``idle`` so the SpeciesList renders the "No
+    // children." empty state instead of staying stuck on the
+    // loading placeholder the set-path reducer set.
+    if (!snapshot.children.some((child) => child.rank === "species")) {
+      dispatch({ type: "set-species-status", status: "idle" });
     }
     // CoL classifies some phyla as leaves whose children are
     // genera. The cascade only auto-loads the species list when
@@ -200,109 +225,82 @@ export function Cascade(): JSX.Element {
     return () => ctrl.abort();
   }, [state.path, state.levelByPath, state.include]);
 
-  // Render the cascade. Each ``dropdowns[i]`` is the picker for
-  // ``path[i]`` — its label is the tier name the picker advances
-  // into, its options are the children of the segment picked at
-  // index ``i - 1`` (or, for ``i === 0``, the cascade roots), and
-  // its value is the segment already chosen (or ``null`` while
-  // the user is still picking).
+  // Render the seven fixed dropdowns. Each ``dropdowns[i]`` is
+  // the picker for ``path[i]``:
   //
-  // The Biota root tier (added in the ``cascade-checklistbank``
-  // chain) is the first slot. Picking Biota or Viruses fills
-  // the second slot with kingdom-rank children (Animalia, etc.)
-  // and labels it "Kingdom" — the CLB resolver reports
-  // ``next_tiers = [{rank: "kingdom", label: "Kingdom", ...}]``
-  // for the root tier.
+  // - Slot 0 (Biota): the options are the root snapshot's
+  //   ``children`` directly. The root snapshot is fetched from
+  //   ``/api/kingdoms`` and the cascade wraps its result in a
+  //   single ``kingdom`` tier so the slot-1 picker can read
+  //   kingdom-rank children from there.
+  // - Slot i > 0: the options come from the **parent** snapshot's
+  //   ``next_tiers`` tier whose ``rank === FIXED_TIERS[i].rank``.
+  //   The parent of slot-i is the snapshot at
+  //   ``path.slice(0, i-1)`` — the snapshot that the previous
+  //   slot's pick populated. The user picked ``path[i]`` from
+  //   that parent's children list.
+  // - Its value is the segment already chosen (or ``null`` while
+  //   the user is still picking the deepest slot).
+  // - Its ``loading`` flag is true when the parent snapshot is
+  //   missing (the /path-children call is still in flight).
   //
-  // Off-tuple intermediate ranks (Issue #43): the resolver
-  // emits one ``NextTier`` per rank group, so the cascade can
-  // append a dropdown for every group. When the user picks
-  // Chordata and the next snapshot reports
-  // ``next_tiers = [{rank: "subphylum", label: "Subphylum", ...}]``,
-  // the cascade renders one "Subphylum" picker; when it
-  // reports infraphylum + class, the cascade renders two
-  // pickers ("Infraphylum", "Class"). Each picker extends the
-  // path by one segment.
+  // When the parent snapshot is missing OR does not expose a
+  // tier with the expected rank, the dropdown renders disabled.
+  // The seven slots are always rendered — no tier outside the
+  // fixed seven ever appears.
   type DropdownDescriptor = {
     key: string;
     label: string;
     options: TaxonResponse[];
     value: string | null;
     loading: boolean;
+    pending: boolean;
   };
-  const dropdowns: DropdownDescriptor[] = [];
-
-  // Always render at least the root "Biota" slot so the user
-  // can pick (or re-pick) the top tier.
-  for (let i = 0; i <= state.path.length; i += 1) {
-    // The picker at index ``i`` selects ``path[i]``. Its
-    // options are the children of the parent segment, which
-    // live in ``levelByPath[pathKey(path.slice(0, i))]``.
+  const dropdowns: DropdownDescriptor[] = FIXED_TIERS.map((tier, i) => {
+    const isDeepest = i === state.path.length;
+    const value = state.path[i] ?? null;
+    // The parent snapshot for slot-i is the snapshot at the path
+    // of the previous picked segment. When ``path`` is empty,
+    // slot-0's parent is the root snapshot (``levelByPath[""]``).
+    // When ``path = ["Biota"]``, slot-1's parent is the Biota
+    // snapshot (``levelByPath["Biota"]``). Slot-i never reads
+    // options from the parent until slot-(i-1) has been picked
+    // — the pending flag short-circuits the read so slots stay
+    // disabled until the user advances the cascade in order.
+    const pending = i > state.path.length;
     const parentPrefix = state.path.slice(0, i);
     const parentKey = pathKey(parentPrefix);
     const parentSnapshot = state.levelByPath[parentKey];
-    const parentTiers = parentSnapshot?.nextTiers ?? null;
-    const isDeepest = i === state.path.length;
-    const value = state.path[i] ?? null;
-    // ``loading`` is true when this slot's options are still
-    // being fetched (the parent snapshot is missing) AND the
-    // slot is the one we are currently fetching. Once the user
-    // has picked ``path[i]`` the slot is "stale" but its
-    // options are already on screen, so loading is false.
+    let options: TaxonResponse[] = [];
+    if (!pending) {
+      if (i === 0) {
+        // The root snapshot IS the list of cascade roots (Biota,
+        // Viruses).
+        options = parentSnapshot?.children ?? [];
+      } else {
+        // Slot-i looks at the snapshot of the picked segment
+        // ``path[i-1]``. That snapshot's ``next_tiers`` carries
+        // one tier per CLB rank group of the segment's children;
+        // the slot reads the tier whose ``rank`` matches the
+        // expected rank for this slot.
+        const parentTiers = parentSnapshot?.nextTiers ?? null;
+        const tierForRank =
+          parentTiers === null || parentTiers === undefined
+            ? null
+            : parentTiers.find((t) => t.rank === tier.rank) ?? null;
+        options = tierForRank?.children ?? [];
+      }
+    }
     const loading = parentSnapshot === undefined && isDeepest;
-    // The dropdown label is the tier the picker will land on.
-    // - i === 0: "Biota" (the cascade root tier).
-    // - i > 0: the first tier from the parent's ``next_tiers``
-    //   so "kingdom" → "Kingdom", "phylum" → "Phylum", etc.
-    //   When the parent has multiple tier groups (off-tuple
-    //   intermediates), only the FIRST group's label surfaces
-    //   here — the cascade renders additional pickers below
-    //   this one for the remaining groups.
-    const label = i === 0
-      ? "Biota"
-      : parentTiers && parentTiers.length > 0
-        ? parentTiers[0]?.label ?? "—"
-        : inferDropdownLabel(parentSnapshot);
-    dropdowns.push({
-      key: i === 0 ? "biota" : parentKey,
-      label,
-      options: parentSnapshot?.children ?? [],
+    return {
+      key: `slot-${i}-${tier.rank}`,
+      label: tier.label,
+      options,
       value: isDeepest ? null : value,
       loading,
-    });
-  }
-
-  // Append one dropdown per remaining tier group when the
-  // deepest snapshot reports ``next_tiers`` with multiple
-  // entries. The path has already advanced past the deepest
-  // picked segment, so these dropdowns all sit at
-  // ``state.path.length`` and extend the path by one segment
-  // each. The label of each dropdown comes from the tier's
-  // own ``label`` field (e.g. "Infraphylum", "Subclass").
-  const deepestKey = pathKey(state.path);
-  const deepestSnapshot = state.levelByPath[deepestKey];
-  if (
-    deepestSnapshot !== undefined &&
-    Array.isArray(deepestSnapshot.nextTiers) &&
-    deepestSnapshot.nextTiers.length > 1
-  ) {
-    const tiers: NextTier[] = deepestSnapshot.nextTiers;
-    // Skip the first tier — the dropdown for ``path[i]`` is
-    // already rendered by the loop above (it shows the first
-    // group's options). The remaining tiers need their own
-    // dropdowns so the user can pick each one.
-    for (let i = 1; i < tiers.length; i += 1) {
-      const tier = tiers[i];
-      if (tier === undefined) continue;
-      dropdowns.push({
-        key: `${deepestKey}::tier::${i}`,
-        label: tier.label,
-        options: tier.children,
-        value: null,
-        loading: false,
-      });
-    }
-  }
+      pending,
+    };
+  });
 
   return (
     <section className="space-y-4" aria-label="Taxonomic cascade">
@@ -310,16 +308,16 @@ export function Cascade(): JSX.Element {
         value={state.include}
         onChange={(next) => dispatch({ type: "set-include", include: next })}
       />
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        {dropdowns.map((drop) => (
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-7">
+        {dropdowns.map((drop, index) => (
           <RankDropdown
             key={drop.key}
             label={drop.label}
             options={drop.options}
             value={drop.value}
             loading={drop.loading}
+            pending={drop.pending}
             onChange={(value) => {
-              const index = dropdowns.indexOf(drop);
               const newPath = state.path.slice(0, index);
               if (value !== null) newPath.push(value);
               dispatch({ type: "set-path", path: newPath });
@@ -343,33 +341,8 @@ interface RankDropdownProps {
   options: TaxonResponse[];
   value: string | null;
   loading: boolean;
+  pending: boolean;
   onChange: (value: string | null) => void;
-}
-
-/**
- * Best-effort label for a dropdown when the snapshot is loading
- * or when ``next_tiers`` is null.
- *
- * - ``undefined`` snapshot → "Loading…" (fetch still in flight).
- * - snapshot with ``next_tiers === null`` (leaf) → fall back
- *   to the rank of the first child so the label is informative
- *   ("genus") instead of "Segment 3".
- */
-function inferDropdownLabel(
-  snapshot:
-    | { children: TaxonResponse[]; nextTiers: NextTier[] | null | undefined }
-    | undefined,
-): string {
-  if (snapshot === undefined) return "Loading…";
-  if (
-    snapshot.nextTiers !== null &&
-    snapshot.nextTiers !== undefined &&
-    snapshot.nextTiers.length > 0
-  ) {
-    return snapshot.nextTiers[0]?.label ?? "—";
-  }
-  if (snapshot.children.length === 0) return "—";
-  return snapshot.children[0]?.rank ?? "—";
 }
 
 function RankDropdown(props: RankDropdownProps): JSX.Element {
@@ -378,13 +351,17 @@ function RankDropdown(props: RankDropdownProps): JSX.Element {
   // A11y followup: when the dropdown transitions from disabled to
   // enabled, move keyboard focus to it so keyboard users Tab once
   // instead of Tab + click.
-  const wasDisabledRef = useRef<boolean>(props.loading);
+  const wasDisabledRef = useRef<boolean>(props.loading || props.pending);
   useEffect(() => {
-    if (wasDisabledRef.current && !props.loading) {
+    const nowDisabled = props.loading || props.pending;
+    if (wasDisabledRef.current && !nowDisabled) {
       queueMicrotask(() => selectRef.current?.focus());
     }
-    wasDisabledRef.current = props.loading;
-  }, [props.loading]);
+    wasDisabledRef.current = nowDisabled;
+  }, [props.loading, props.pending]);
+
+  const isDisabled =
+    props.loading || props.pending || props.options.length === 0;
 
   return (
     <label className="flex flex-col gap-1 text-sm text-navy">
@@ -392,13 +369,19 @@ function RankDropdown(props: RankDropdownProps): JSX.Element {
       <select
         ref={selectRef}
         aria-label={props.label}
-        disabled={props.loading}
+        disabled={isDisabled}
         value={props.value ?? ""}
         onChange={(e) => props.onChange(e.target.value === "" ? null : e.target.value)}
         className="rounded-btn border border-border bg-surface px-3 py-2 text-base text-navy disabled:bg-bg disabled:text-muted"
       >
         <option value="">
-          {props.loading ? "Loading children…" : "—"}
+          {props.loading
+            ? "Loading…"
+            : props.pending
+              ? `Pick ${FIXED_TIERS[Math.max(0, FIXED_TIERS.findIndex((t) => t.label === props.label) - 1)]?.label ?? "previous"} first`
+              : props.options.length === 0
+                ? `No ${props.label.toLowerCase()} available`
+                : "—"}
         </option>
         {props.options.map((opt) => (
           <option key={opt.id} value={opt.name}>
