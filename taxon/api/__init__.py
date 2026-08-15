@@ -10,6 +10,7 @@ compatibility with callers that imported them from ``taxon.api``.
 from __future__ import annotations
 
 import os
+import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -20,12 +21,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from taxon.api.errors import AmbiguousError, APIError, NotFoundError
 from taxon.api.router import router as api_router
 from taxon.api.schemas import AmbiguityCandidate, ErrorResponse, HealthResponse
+from taxon.taxonomy import display_level
 
 # Default on-disk location for the SQLite database produced by ``import_data``.
 # Lives next to ``pyproject.toml`` so a single ``python -m taxon.main`` invocation
@@ -75,6 +77,12 @@ def _build_engine(database_url: str) -> Engine:
     lifespan. We pin the engine to a single shared connection via
     ``StaticPool`` so the schema lives for the lifetime of the
     process. File-backed SQLite is unaffected.
+
+    The ``taxonomy_display_level`` SQL function is registered on every
+    new SQLite connection so the cascade resolver can compute the
+    display bucket at query time when the ``display_level`` column is
+    NULL (the GBIF indented-tree importer intentionally leaves the
+    column NULL — see :mod:`taxon.indented_import`).
     """
     connect_args: dict[str, Any] = {}
     kwargs: dict[str, Any] = {"future": True}
@@ -85,7 +93,14 @@ def _build_engine(database_url: str) -> Engine:
 
             kwargs["poolclass"] = StaticPool
     kwargs["connect_args"] = connect_args
-    return create_engine(database_url, **kwargs)
+    engine = create_engine(database_url, **kwargs)
+
+    @event.listens_for(engine, "connect")
+    def _register_sqlite_functions(dbapi_connection: Any, _: Any) -> None:
+        conn: sqlite3.Connection = dbapi_connection
+        conn.create_function("taxonomy_display_level", 1, display_level)
+
+    return engine
 
 
 def _error_response(
