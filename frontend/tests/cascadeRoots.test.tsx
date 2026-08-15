@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
 import type { TaxonResponse } from "../src/api";
+import { waitForEnabledOption } from "./test-helpers";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -103,7 +104,7 @@ describe("Cascade root tier", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota"),
       "Biota",
     );
 

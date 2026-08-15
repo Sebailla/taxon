@@ -31,6 +31,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
 import type { TaxonResponse } from "../src/api";
+import { waitForEnabledOption } from "./test-helpers";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -169,15 +170,15 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Arthropoda"),
       "Arthropoda",
     );
 
@@ -262,15 +263,15 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Chordata"),
       "Chordata",
     );
 
@@ -394,23 +395,23 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Arthropoda"),
       "Arthropoda",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Class" }),
+      await waitForEnabledOption("Class", "Insecta"),
       "Insecta",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Order" }),
+      await waitForEnabledOption("Order", "Coleoptera"),
       "Coleoptera",
     );
     // Wait for the Family dropdown to populate with Curculionidae
@@ -569,23 +570,23 @@ describe("Cascade — always 7 fixed dropdowns", () => {
 
     // Walk the seven fixed dropdowns in order.
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Arthropoda"),
       "Arthropoda",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Class" }),
+      await waitForEnabledOption("Class", "Insecta"),
       "Insecta",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Order" }),
+      await waitForEnabledOption("Order", "Coleoptera"),
       "Coleoptera",
     );
     // Wait for the Family dropdown to populate with Curculionidae
@@ -731,23 +732,23 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Arthropoda"),
       "Arthropoda",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Class" }),
+      await waitForEnabledOption("Class", "Insecta"),
       "Insecta",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Order" }),
+      await waitForEnabledOption("Order", "Coleoptera"),
       "Coleoptera",
     );
     // Wait for the Family dropdown to populate with Curculionidae
