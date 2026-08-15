@@ -295,9 +295,7 @@ def _resolve_parent_ids(
     with engine.begin() as connection:
         source_to_id: dict[str, int] = {
             row[0]: row[1]
-            for row in connection.exec_driver_sql(
-                "SELECT source_id, id FROM taxa"
-            ).fetchall()
+            for row in connection.exec_driver_sql("SELECT source_id, id FROM taxa").fetchall()
         }
         updates = [
             (source_to_id[parent_id], source_id)
