@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Cascade } from "../src/components/Cascade";
 import type { NextTier, TaxonResponse } from "../src/api";
+import { waitForEnabledOption } from "./test-helpers";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -136,15 +137,15 @@ describe("Path-aware cascade chains through the seven fixed tiers", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Chordata"),
       "Chordata",
     );
 
@@ -287,23 +288,23 @@ describe("Path-aware cascade reaches species after a genus is picked", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Phylum" }),
+      await waitForEnabledOption("Phylum", "Arthropoda"),
       "Arthropoda",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Class" }),
+      await waitForEnabledOption("Class", "Insecta"),
       "Insecta",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Order" }),
+      await waitForEnabledOption("Order", "Coleoptera"),
       "Coleoptera",
     );
     const familyDropdown = await screen.findByRole("combobox", { name: "Family" });
@@ -403,11 +404,11 @@ describe("Path-aware cascade resets children when a parent changes", () => {
 
     // First chain: Biota → Animalia → Chordata.
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Biota" }),
+      await waitForEnabledOption("Biota", "Biota"),
       "Biota",
     );
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Kingdom" }),
+      await waitForEnabledOption("Kingdom", "Animalia"),
       "Animalia",
     );
     await screen.findByRole("option", { name: "Chordata" });
