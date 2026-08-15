@@ -206,3 +206,80 @@ def test_import_handles_depth_skip(tmp_path: Path) -> None:
     counts = import_indented_dataset(src, db)
     assert counts.total_taxa == 1
     assert counts.rejected_lines == 1
+
+
+def test_import_marks_synonym_and_extinct_from_name(tmp_path: Path) -> None:
+    """A ``=`` prefix on the name marks the row as ``is_synonym``
+    and a ``\\u2020`` (dagger) prefix marks it as ``is_extinct``.
+    Both flags must surface on the inserted row so the cascade UI
+    can filter the rows later without re-parsing the source.
+    """
+    src = tmp_path / "marked.txt"
+    src.write_text(
+        "Animalia [kingdom] {ID=1}\n"
+        "  Felis [genus] {ID=2}\n"
+        "    =Felis catus Linnaeus, 1758 [species] {ID=3}\n"
+        "    Felis silvestris Schreber, 1777 [species] {ID=4}\n"
+        "  \u2020Actinomycites D. Ellis, 1916 [genus] {ID=5}\n",
+        encoding="utf-8",
+    )
+    db = tmp_path / "taxon.db"
+    counts = import_indented_dataset(src, db, batch_size=8)
+    assert counts.total_taxa == 5
+    assert counts.rejected_lines == 0
+
+    conn = sqlite3.connect(db)
+    try:
+        rows = {
+            row[0]: row
+            for row in conn.execute(
+                "SELECT source_id, name, is_synonym, is_extinct FROM taxa ORDER BY id"
+            )
+        }
+        # ``=Felis catus...`` is a synonym.
+        felis_catus = rows["3"]
+        assert felis_catus[1] == "=Felis catus Linnaeus, 1758"
+        assert bool(felis_catus[2]) is True
+        assert bool(felis_catus[3]) is False
+        # Plain name (no marker) keeps both flags False.
+        felis_silvestris = rows["4"]
+        assert bool(felis_silvestris[2]) is False
+        assert bool(felis_silvestris[3]) is False
+        # ``\u2020Actinomycites...`` is an extinct genus; the dagger is
+        # not a synonym marker.
+        actinomycites = rows["5"]
+        assert actinomycites[1].startswith("\u2020")
+        assert bool(actinomycites[2]) is False
+        assert bool(actinomycites[3]) is True
+    finally:
+        conn.close()
+
+
+def test_import_does_not_flag_inner_equals_or_dagger_as_marker(tmp_path: Path) -> None:
+    """Only the leading character of the name is a marker. A
+    literal ``=`` or ``\u2020`` buried mid-name (e.g. inside an
+    author string) must not flip the synonym or extinct flags.
+    """
+    src = tmp_path / "ambiguous.txt"
+    src.write_text(
+        "Animalia [kingdom] {ID=1}\n"
+        "  Escherichia coli (Migula, 1895) Castellani & Chalmers 1919 (Approved Lists 1980) "
+        "[species] {ID=2}\n"
+        "  Homo sapiens Linnaeus, 1758 [species] {ID=3}\n",
+        encoding="utf-8",
+    )
+    db = tmp_path / "taxon.db"
+    counts = import_indented_dataset(src, db, batch_size=4)
+    assert counts.total_taxa == 3
+    conn = sqlite3.connect(db)
+    try:
+        flags = conn.execute(
+            "SELECT source_id, is_synonym, is_extinct FROM taxa ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert flags == [
+        ("1", 0, 0),
+        ("2", 0, 0),
+        ("3", 0, 0),
+    ]
