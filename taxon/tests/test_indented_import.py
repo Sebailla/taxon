@@ -1,4 +1,4 @@
-"""Contract tests for ``taxon.col_import``.
+"""Contract tests for ``taxon.indented_import``.
 
 The importer ships a GBIF / CLB indented-tree dump into the
 local SQLite database. The tests construct a tiny in-memory
@@ -24,10 +24,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from taxon.col_import import (
+from taxon.indented_import import (
     _parse_lines,
     _parse_metadata,
-    import_col_dataset,
+    import_indented_dataset,
 )
 
 
@@ -107,9 +107,9 @@ def test_parse_lines_flags_malformed_indentation() -> None:
     assert errors == [{"__error__": "indentation is not even spaces"}]
 
 
-def test_parse_lines_flags_depth_skip() -> None:
+def test_parse_lines_accepts_depth_skip() -> None:
     """A depth that skips a parent level is rejected at the
-    ``import_col_dataset`` router rather than the parser."""
+    ``import_indented_dataset`` router rather than the parser."""
     lines = [
         "Animalia [kingdom] {ID=1}\n",
         "        Chordata [phylum] {ID=2}\n",  # depth 4 with no depth 1-3 parents
@@ -133,7 +133,7 @@ def test_import_writes_all_rows_with_correct_parent(tmp_path: Path) -> None:
     cross the whole tree without leaving the local database."""
     src = _write_fixture(tmp_path)
     db = tmp_path / "taxon.db"
-    counts = import_col_dataset(src, db, batch_size=64)
+    counts = import_indented_dataset(src, db, batch_size=64)
     assert counts.total_taxa == 20
     assert counts.rejected_lines == 0
 
@@ -162,8 +162,8 @@ def test_import_is_idempotent(tmp_path: Path) -> None:
     leaving ghost rows from the first run."""
     src = _write_fixture(tmp_path)
     db = tmp_path / "taxon.db"
-    import_col_dataset(src, db)
-    counts = import_col_dataset(src, db)
+    import_indented_dataset(src, db)
+    counts = import_indented_dataset(src, db)
     assert counts.total_taxa == 20
     conn = sqlite3.connect(db)
     try:
@@ -182,7 +182,7 @@ def test_import_rejects_missing_id_metadata(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     db = tmp_path / "taxon.db"
-    counts = import_col_dataset(src, db)
+    counts = import_indented_dataset(src, db)
     conn = sqlite3.connect(db)
     try:
         rows = conn.execute("SELECT source_id FROM taxa").fetchall()
@@ -203,6 +203,6 @@ def test_import_handles_depth_skip(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     db = tmp_path / "taxon.db"
-    counts = import_col_dataset(src, db)
+    counts = import_indented_dataset(src, db)
     assert counts.total_taxa == 1
     assert counts.rejected_lines == 1
