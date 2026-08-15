@@ -1191,3 +1191,256 @@ def test_path_children_reaches_panthera_via_intermediates() -> None:
     assert response.parent.taxon_id == "PA"
     assert response.parent.canonical_name == "Panthera"
     assert response.next_tiers is None
+
+
+# ---------------------------------------------------------------------------
+# Family → Genus aggregation (off-tuple intermediates)
+# ---------------------------------------------------------------------------
+
+
+def test_family_with_subfamily_children_aggregates_to_genus_tier() -> None:
+    """``Felidae`` (family) has subfamily children
+    (``Felinae``, ``Pantherinae``, …) and the genus rows live
+    *under* the subfamilies, not directly under the family. The
+    resolver must descend into every subfamily, collect every
+    genus-rank child, and emit a single ``genus`` tier so the
+    cascade UI does not break its 7-fixed-dropdown promise.
+
+    Without the aggregation rule this test would surface one tier
+    per CLB rank group (``subfamily``, ``tribe``, …) and the
+    cascade UI would render an empty picker for every group. With
+    the rule in place the wire envelope exposes only the single
+    ``genus`` tier that the cascade UI knows how to consume.
+    """
+    # The full Panthera lineage includes every off-tuple
+    # intermediate CLB exposes today (infraphylum, parvphylum,
+    # megaclass, subclass, suborder). Pinning the chain here
+    # mirrors the well-tested regression chain in
+    # ``test_path_children_reaches_panthera_via_intermediates``.
+    chain = [
+        ("Animalia", "kingdom", "N"),
+        ("Chordata", "phylum", "CH2"),
+        ("Vertebrata", "subphylum", "VE"),
+        ("Gnathostomata", "infraphylum", "GN"),
+        ("Osteichthyes", "parvphylum", "OS"),
+        ("Tetrapoda", "megaclass", "TT"),
+        ("Mammalia", "class", "MA"),
+        ("Theria", "subclass", "TH"),
+        ("Carnivora", "order", "CA"),
+        ("Feliformia", "suborder", "FL"),
+        ("Felidae", "family", "FE"),
+    ]
+    responses: dict[tuple[str, str], httpx.Response] = {}
+    for name, rank, tid in chain:
+        responses[("GET", _search_path(name, rank=rank))] = _search_200([_row(tid, name, rank)])
+        # The best-effort resolver also tries rank-less search
+        # for off-tuple intermediate ranks.
+        responses[("GET", _search_path_no_rank(name))] = _search_200([_row(tid, name, rank)])
+    responses[("GET", _children_path("FE"))] = _children_200(
+        [
+            _row("FEN", "Felinae", "subfamily", parent_id="FE"),
+            _row("PAN", "Pantherinae", "subfamily", parent_id="FE"),
+        ]
+    )
+    responses[("GET", _children_path("FEN"))] = _children_200(
+        [
+            _row("FEL", "Felis", "genus", parent_id="FEN"),
+            _row("LYN", "Lynx", "genus", parent_id="FEN"),
+        ]
+    )
+    responses[("GET", _children_path("PAN"))] = _children_200(
+        [_row("PA", "Panthera", "genus", parent_id="PAN")]
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=_transport(responses)))
+    response = clb_path_children.list_path_children(
+        [
+            "Animalia",
+            "Chordata",
+            "Vertebrata",
+            "Gnathostomata",
+            "Osteichthyes",
+            "Tetrapoda",
+            "Mammalia",
+            "Theria",
+            "Carnivora",
+            "Feliformia",
+            "Felidae",
+        ],
+        client=client,
+    )
+    assert response is not None
+    assert response.parent.canonical_name == "Felidae"
+    # Single aggregated genus tier — the subfamily rows are hidden
+    # inside the walk and only the genus-rank children surface.
+    assert response.next_tiers is not None
+    assert [tier.rank for tier in response.next_tiers] == ["genus"]
+    aggregated_names = {c.canonical_name for c in response.next_tiers[0].children}
+    assert aggregated_names == {"Felis", "Lynx", "Panthera"}
+
+
+def test_family_with_tribe_under_subfamily_aggregates_to_genus() -> None:
+    """Three-level intermediate — subfamily → tribe → genus. The
+    resolver must descend into every subfamily, then into every
+    tribe, and collect every genus-rank descendant under a single
+    ``genus`` tier.
+    """
+    chain = [
+        ("Animalia", "kingdom", "N"),
+        ("Chordata", "phylum", "CH2"),
+        ("Vertebrata", "subphylum", "VE"),
+        ("Gnathostomata", "infraphylum", "GN"),
+        ("Osteichthyes", "parvphylum", "OS"),
+        ("Tetrapoda", "megaclass", "TT"),
+        ("Mammalia", "class", "MA"),
+        ("Theria", "subclass", "TH"),
+        ("Carnivora", "order", "CA"),
+        ("Feliformia", "suborder", "FL"),
+        ("Felidae", "family", "FE"),
+    ]
+    responses: dict[tuple[str, str], httpx.Response] = {}
+    for name, rank, tid in chain:
+        responses[("GET", _search_path(name, rank=rank))] = _search_200([_row(tid, name, rank)])
+        responses[("GET", _search_path_no_rank(name))] = _search_200([_row(tid, name, rank)])
+    responses[("GET", _children_path("FE"))] = _children_200(
+        [_row("FEN", "Felinae", "subfamily", parent_id="FE")]
+    )
+    responses[("GET", _children_path("FEN"))] = _children_200(
+        [
+            _row("FET", "Felini", "tribe", parent_id="FEN"),
+            _row("LYT", "Lyncini", "tribe", parent_id="FEN"),
+        ]
+    )
+    responses[("GET", _children_path("FET"))] = _children_200(
+        [_row("FEL", "Felis", "genus", parent_id="FET")]
+    )
+    responses[("GET", _children_path("LYT"))] = _children_200(
+        [_row("LYN", "Lynx", "genus", parent_id="LYT")]
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=_transport(responses)))
+    response = clb_path_children.list_path_children(
+        [
+            "Animalia",
+            "Chordata",
+            "Vertebrata",
+            "Gnathostomata",
+            "Osteichthyes",
+            "Tetrapoda",
+            "Mammalia",
+            "Theria",
+            "Carnivora",
+            "Feliformia",
+            "Felidae",
+        ],
+        client=client,
+    )
+    assert response is not None
+    assert response.next_tiers is not None
+    assert [tier.rank for tier in response.next_tiers] == ["genus"]
+    aggregated_names = {c.canonical_name for c in response.next_tiers[0].children}
+    assert aggregated_names == {"Felis", "Lynx"}
+
+
+def test_family_with_direct_genus_children_returns_genus_tier() -> None:
+    """A family with no inter-tier intermediates (children are
+    genus-rank directly) keeps the existing behaviour: one
+    ``genus`` tier with the direct children.
+    """
+    chain = [
+        ("Animalia", "kingdom", "N"),
+        ("Chordata", "phylum", "CH2"),
+        ("Vertebrata", "subphylum", "VE"),
+        ("Gnathostomata", "infraphylum", "GN"),
+        ("Osteichthyes", "parvphylum", "OS"),
+        ("Tetrapoda", "megaclass", "TT"),
+        ("Mammalia", "class", "MA"),
+        ("Theria", "subclass", "TH"),
+        ("Carnivora", "order", "CA"),
+        ("Feliformia", "suborder", "FL"),
+        ("Felidae", "family", "FE"),
+    ]
+    responses: dict[tuple[str, str], httpx.Response] = {}
+    for name, rank, tid in chain:
+        responses[("GET", _search_path(name, rank=rank))] = _search_200([_row(tid, name, rank)])
+        responses[("GET", _search_path_no_rank(name))] = _search_200([_row(tid, name, rank)])
+    responses[("GET", _children_path("FE"))] = _children_200(
+        [
+            _row("PA", "Panthera", "genus", parent_id="FE"),
+            _row("FE2", "Felis", "genus", parent_id="FE"),
+        ]
+    )
+    client = ChecklistBankClient(client=httpx.Client(transport=_transport(responses)))
+    response = clb_path_children.list_path_children(
+        [
+            "Animalia",
+            "Chordata",
+            "Vertebrata",
+            "Gnathostomata",
+            "Osteichthyes",
+            "Tetrapoda",
+            "Mammalia",
+            "Theria",
+            "Carnivora",
+            "Feliformia",
+            "Felidae",
+        ],
+        client=client,
+    )
+    assert response is not None
+    assert response.next_tiers is not None
+    assert [tier.rank for tier in response.next_tiers] == ["genus"]
+    assert {c.canonical_name for c in response.next_tiers[0].children} == {
+        "Panthera",
+        "Felis",
+    }
+
+
+def test_family_with_only_subfamily_and_no_genus_falls_back_to_subfamily() -> None:
+    """When a family has subfamily children but no descendant
+    genus (e.g. a fossil family whose subfamily leaves are also
+    leaves), the resolver keeps the original subfamily tier rather
+    than emitting an empty ``genus`` tier.
+    """
+    chain = [
+        ("Animalia", "kingdom", "N"),
+        ("Chordata", "phylum", "CH2"),
+        ("Vertebrata", "subphylum", "VE"),
+        ("Gnathostomata", "infraphylum", "GN"),
+        ("Osteichthyes", "parvphylum", "OS"),
+        ("Tetrapoda", "megaclass", "TT"),
+        ("Mammalia", "class", "MA"),
+        ("Theria", "subclass", "TH"),
+        ("Carnivora", "order", "CA"),
+        ("Feliformia", "suborder", "FL"),
+        ("Fossilidae", "family", "FS"),
+    ]
+    responses: dict[tuple[str, str], httpx.Response] = {}
+    for name, rank, tid in chain:
+        responses[("GET", _search_path(name, rank=rank))] = _search_200([_row(tid, name, rank)])
+        responses[("GET", _search_path_no_rank(name))] = _search_200([_row(tid, name, rank)])
+    responses[("GET", _children_path("FS"))] = _children_200(
+        [_row("FSN", "Fossilinae", "subfamily", parent_id="FS")]
+    )
+    responses[("GET", _children_path("FSN"))] = _children_200([])
+    client = ChecklistBankClient(client=httpx.Client(transport=_transport(responses)))
+    response = clb_path_children.list_path_children(
+        [
+            "Animalia",
+            "Chordata",
+            "Vertebrata",
+            "Gnathostomata",
+            "Osteichthyes",
+            "Tetrapoda",
+            "Mammalia",
+            "Theria",
+            "Carnivora",
+            "Feliformia",
+            "Fossilidae",
+        ],
+        client=client,
+    )
+    assert response is not None
+    # No genus-rank descendants anywhere — the resolver falls back
+    # to the historical per-rank-group behaviour so the cascade UI
+    # can render the subfamily dropdown.
+    assert response.next_tiers is not None
+    assert [tier.rank for tier in response.next_tiers] == ["subfamily"]
