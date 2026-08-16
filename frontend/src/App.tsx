@@ -106,22 +106,25 @@ export function App(): JSX.Element {
     return () => ctrl.abort();
   }, [resolved, parentSegments]);
 
-  // Breadcrumb-links panel: keyed by ``cascadePath.join("|")`` so
-  // every distinct pick fires a fresh fetch and the previous
-  // in-flight one is aborted on cleanup. The path comes from the
-  // Zustand store which is fed by both the Cascade reducer (real
-  // user picks) and the App's own ``path:change`` listener
+  // Breadcrumb-links panel: keyed by the path reference so every
+  // distinct pick fires a fresh fetch and the previous in-flight
+  // one is aborted on cleanup. The path comes from the Zustand
+  // store which is fed by both the Cascade reducer (real user
+  // picks) and the App's own ``path:change`` listener
   // (event-driven picks from tests or future producers).
+  //
+  // The store's ``setPath`` is a no-op for an identical-content
+  // array, so the cascadePath reference is stable across
+  // redundant dispatches and the effect does not refire.
   useEffect(() => {
-    const path = cascadePath;
-    if (path.length === 0) {
+    if (cascadePath.length === 0) {
       // No path = no panel; clear any stale data.
       setBreadcrumbLinks({ status: "idle" });
       return;
     }
     const ctrl = new AbortController();
     setBreadcrumbLinks({ status: "loading" });
-    void fetchTaxonLinks(path, { signal: ctrl.signal }).then(
+    void fetchTaxonLinks(cascadePath, { signal: ctrl.signal }).then(
       (result: ApiResult<TaxonLinksResponse>) => {
         if (ctrl.signal.aborted) return;
         if (result.status === "ok") {
@@ -136,7 +139,7 @@ export function App(): JSX.Element {
       },
     );
     return () => ctrl.abort();
-  }, [cascadePath.join("|")]);
+  }, [cascadePath]);
 
   // Listen for ``path:change`` events so any producer
   // (the Cascade in production, tests in development) can
