@@ -6,22 +6,16 @@ subscriber. The path is the only mid-cascade state the App needs
 to render the breadcrumb-links panel before the user has resolved
 a species.
 
-We use Zustand's vanilla flavour (``createStore``) instead of the
-React hook flavour because:
-
-- The store is read from a non-React event handler (the App's
-  ``path:change`` listener) AND from a React ``useEffect``.
-  Vanilla gives us a single source of truth that both can read.
-- The path rarely changes; subscribers fire only when the path
-  actually changes (Zustand uses reference equality on the
-  selector by default; we keep the array identity stable when
-  no entry changed).
-
-The store is a singleton — import the ``useCascadePath`` named
-export from anywhere in the frontend tree.
+We use Zustand's react flavour (``create``) which produces a typed
+hook that doubles as the vanilla store API (``useCascadePath.getState``
+and ``useCascadePath.subscribe``). That keeps a single source of
+truth that both React components (``useCascadePath((s) => s.path)``)
+and the Cascade's reducer consumer (which reads via ``getState``)
+can use. The path rarely changes; the ``setPath`` reducer skips
+no-op replaces so a redundant call does not refire subscribers.
 */
 
-import { createStore } from "zustand/vanilla";
+import { create } from "zustand";
 
 /**
  * Public store shape.
@@ -53,7 +47,7 @@ function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
-export const useCascadePath = createStore<CascadePathState>((set) => ({
+export const useCascadePath = create<CascadePathState>((set) => ({
   path: [],
   setPath: (next) => {
     set((prev) => {
