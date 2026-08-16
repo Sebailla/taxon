@@ -13,10 +13,11 @@ These tests pin the contract for tasks 3.7–3.8 in
 ``openspec/changes/breadcrumb-dinamico/tasks.md``.
 */
 
-import { act, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/App";
+import { useCascadePath } from "../src/store/cascadePath";
 
 const LINKS_13 = Array.from({ length: 13 }, (_, i) => ({
   source: `src-${i}`,
@@ -49,6 +50,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+beforeEach(() => {
+  // Reset the global cascade path so each test starts from a
+  // clean slate. Without this, the Zustand store bleeds state
+  // across tests (the store is a module-level singleton).
+  useCascadePath.setState({ path: [] });
+});
+
 function dispatchPathChange(path: string[]): void {
   act(() => {
     window.dispatchEvent(
@@ -61,25 +69,52 @@ describe("App — breadcrumb-links panel", () => {
   it("dispatches a single fetch and renders 13 links when path:change fires with [Animalia, Chordata]", async () => {
     // 3.7 — happy path. The App mounts, the Cascade (mocked via the
     // path:change event) sets the path, the App's effect calls
-    // fetchTaxonLinks, and the panel renders the 13 <a> elements.
+    // fetchTaxonLinks, and the panel renders the 13 list items.
+    // The SpeciesLinks component wraps each <a> with role="listitem"
+    // inside a role="list" container; we assert on the listitems so
+    // the contract is decoupled from the underlying anchor tag.
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        mockFetchJson({ taxon: CHORDATA_TAXON, links: LINKS_13 }),
-      );
+      .mockImplementation((url: string | URL) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        // First call: Cascade roots.
+        if (urlStr.endsWith("/kingdoms")) {
+          return Promise.resolve(
+            mockFetchJson([
+              { id: 1, name: "Biota", display_name: "Biota [biota]", rank: "biota", parent_id: null, is_synonym: false, is_extinct: false, is_uncertain: false, is_unassigned: false },
+              { id: 2, name: "Viruses", display_name: "Viruses [biota]", rank: "biota", parent_id: null, is_synonym: false, is_extinct: false, is_uncertain: false, is_unassigned: false },
+            ]),
+          );
+        }
+        // taxon-links endpoint.
+        return Promise.resolve(
+          mockFetchJson({ taxon: CHORDATA_TAXON, links: LINKS_13 }),
+        );
+      });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     render(<App />);
     dispatchPathChange(["Animalia", "Chordata"]);
 
-    // Advance the microtask queue + the panel render.
+    // Advance the microtask queue + the panel render. The SpeciesLinks
+    // panel renders a ``<section aria-label="Search source dispatch">``
+    // containing a ``role="list"``; we count the listitems inside
+    // that section so the breadcrumb's two segments don't pollute the
+    // count.
     await waitFor(() => {
-      const anchors = screen.getAllByRole("link");
-      expect(anchors).toHaveLength(13);
+      const dispatchSection = screen.getByRole("region", {
+        name: /search source dispatch/i,
+      });
+      const items = within(dispatchSection).getAllByRole("listitem");
+      expect(items).toHaveLength(13);
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const url = (fetchMock.mock.calls[0] as [string])[0];
-    expect(url).toBe("/api/Animalia%7CChordata/taxon-links");
+    // Two fetch calls: one for the Cascade roots, one for taxon-links.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const taxonLinksCall = fetchMock.mock.calls.find(
+      (call) => (call[0] as string).includes("taxon-links"),
+    );
+    expect(taxonLinksCall).toBeDefined();
+    expect(taxonLinksCall![0]).toBe("/api/Animalia%7CChordata/taxon-links");
   });
 
   it("aborts the first fetch when a second path:change arrives before the first resolves", async () => {
@@ -100,6 +135,25 @@ describe("App — breadcrumb-links panel", () => {
     const fetchMock = vi.fn().mockImplementation(
       (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
+        // The Cascade's roots fetch on mount: return an array
+        // so the effect does not throw.
+        if (url.endsWith("/kingdoms")) {
+          return Promise.resolve(
+            mockFetchJson([
+              {
+                id: 1,
+                name: "Biota",
+                display_name: "Biota [biota]",
+                rank: "biota",
+                parent_id: null,
+                is_synonym: false,
+                is_extinct: false,
+                is_uncertain: false,
+                is_unassigned: false,
+              },
+            ]),
+          );
+        }
         if (url.includes("Chordata")) {
           // First call — slow, never resolves until we choose to.
           return new Promise<Response>((res) => {
@@ -135,15 +189,26 @@ describe("App — breadcrumb-links panel", () => {
     render(<App />);
 
     // 1) Fire the first path:change — starts fetch #1 (Chordata).
+    // The Cascade's roots fetch on mount is the first call; the
+    // taxon-links fetch for ["Animalia", "Chordata"] is the second.
     dispatchPathChange(["Animalia", "Chordata"]);
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // Filter out the roots call: we want exactly ONE taxon-links
+      // fetch in flight.
+      const taxonLinksCalls = fetchMock.mock.calls.filter(
+        (call) => (call[0] as string).includes("taxon-links"),
+      );
+      expect(taxonLinksCalls.length).toBe(1);
     });
 
-    // 2) Fire the second path:change — should abort fetch #1.
+    // 2) Fire the second path:change — should abort fetch #1 and
+    //    start a fresh fetch #2 for ["Animalia"].
     dispatchPathChange(["Animalia"]);
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const taxonLinksCalls = fetchMock.mock.calls.filter(
+        (call) => (call[0] as string).includes("taxon-links"),
+      );
+      expect(taxonLinksCalls.length).toBe(2);
     });
 
     // The first request was aborted; resolve it with an abort so
@@ -157,8 +222,11 @@ describe("App — breadcrumb-links panel", () => {
     // Only ONE fetch remains in flight (the second one), and the
     // panel renders its result.
     await waitFor(() => {
-      const anchors = screen.getAllByRole("link");
-      expect(anchors).toHaveLength(13);
+      const dispatchSection = screen.getByRole("region", {
+        name: /search source dispatch/i,
+      });
+      const items = within(dispatchSection).getAllByRole("listitem");
+      expect(items).toHaveLength(13);
     });
   });
 });
