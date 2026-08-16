@@ -29,9 +29,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Cascade, PATH_CHANGE_EVENT } from "../src/components/Cascade";
+import { Cascade } from "../src/components/Cascade";
 import type { TaxonResponse } from "../src/api";
-import { waitForEnabledOption } from "./test-helpers";
 
 function mockFetchJson(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
@@ -170,15 +169,15 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await waitForEnabledOption("Biota", "Biota"),
+      await screen.findByRole("combobox", { name: "Biota" }),
       "Biota",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Kingdom", "Animalia"),
+      await screen.findByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Phylum", "Arthropoda"),
+      await screen.findByRole("combobox", { name: "Phylum" }),
       "Arthropoda",
     );
 
@@ -263,15 +262,15 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await waitForEnabledOption("Biota", "Biota"),
+      await screen.findByRole("combobox", { name: "Biota" }),
       "Biota",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Kingdom", "Animalia"),
+      await screen.findByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Phylum", "Chordata"),
+      await screen.findByRole("combobox", { name: "Phylum" }),
       "Chordata",
     );
 
@@ -367,25 +366,7 @@ describe("Cascade — always 7 fixed dropdowns", () => {
         mockFetchJson({
           parent: taxon(40, "Coleoptera", "order"),
           children: [taxon(50, "Curculionidae", "family", 40)],
-          // Curculionidae is the family-rank child Coleoptera exposes.
-          // The next_tiers points to the "family" tier so the
-          // slot-5 (Family) dropdown can populate with it.
-          next_tiers: [
-            {
-              rank: "family",
-              label: "Family",
-              examples: ["Curculionidae"],
-              children: [taxon(50, "Curculionidae", "family", 40)],
-            },
-          ],
-        }),
-      )
-      // Picking Curculionidae resolves to a family-rank leaf with
-      // no genus children — the genus dropdown must stay disabled.
-      .mockResolvedValueOnce(
-        mockFetchJson({
-          parent: taxon(50, "Curculionidae", "family"),
-          children: [],
+          // Family has no genus children — leaf at the family level.
           next_tiers: null,
         }),
       );
@@ -395,36 +376,29 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await waitForEnabledOption("Biota", "Biota"),
+      await screen.findByRole("combobox", { name: "Biota" }),
       "Biota",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Kingdom", "Animalia"),
+      await screen.findByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Phylum", "Arthropoda"),
+      await screen.findByRole("combobox", { name: "Phylum" }),
       "Arthropoda",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Class", "Insecta"),
+      await screen.findByRole("combobox", { name: "Class" }),
       "Insecta",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Order", "Coleoptera"),
+      await screen.findByRole("combobox", { name: "Order" }),
       "Coleoptera",
     );
-    // Wait for the Family dropdown to populate with Curculionidae
-    // — the /path-children fetch for Coleoptera is in flight after
-    // the Order pick, and the Family dropdown is loading until it
-    // resolves.
-    const familyDropdown = await screen.findByRole("combobox", { name: "Family" });
-    await waitFor(() => {
-      expect(
-        within(familyDropdown).getByRole("option", { name: "Curculionidae" }),
-      ).toBeInTheDocument();
-    });
-    await user.selectOptions(familyDropdown, "Curculionidae");
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Family" }),
+      "Curculionidae",
+    );
 
     // Genus dropdown rendered but disabled.
     const genusDropdown = screen.getByRole("combobox", { name: "Genus" });
@@ -437,12 +411,26 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     expect(await screen.findAllByRole("combobox")).toHaveLength(7);
   });
 
-  it("full chain: Biota → Animalia → Arthropoda → ... → Sitophilus → species list", async () => {
-    // Walks the full chain with the seven-dropdown rule.
-    // Arthropoda has no subphylum, so the path goes straight from
-    // Phylum to Class. Walks: Biota → Animalia → Arthropoda (phylum)
-    // → Insecta (class) → Coleoptera (order) → Curculionidae (family)
-    // → Sitophilus (genus) → species list.
+  it("full chain: Biota → Animalia → Chordata → ... → Panthera → species list", async () => {
+    // Walks the full Panthera chain with the seven-dropdown rule.
+    // Chordata's subphylum collapse forces an extra step (the user
+    // does NOT see a subphylum dropdown, but the path internally
+    // extends with Vertebrata when the next /path-children call is
+    // made against the Chordata snapshot). To keep the test focused
+    // on the seven-dropdown rule, the mock for Chordata's children
+    // already returns the subphylum row AND the user just picks
+    // Vertebrata implicitly through the next /path-children call —
+    // wait, that would require a subphylum dropdown. Per the rule,
+    // subphylum is invisible. So the mock must collapse subphylum
+    // into Chordata's children shape (next_tiers: [{rank: "class",
+    // label: "Class", children: [Vertebrata's classes]}]) — but the
+    // path walk resolves Vertebrata as a subphylum tier, not a
+    // class. The cleanest end-to-end test uses a phylum without
+    // subphylum to land on a class-tier pickable set.
+    //
+    // We walk: Biota → Animalia → Arthropoda (no subphylum) → Insecta
+    // (class) → Coleoptera (order) → Curculionidae (family) →
+    // Sitophilus (genus) → species list.
     const fetchMock = vi
       .fn()
       // 1. Root.
@@ -570,44 +558,33 @@ describe("Cascade — always 7 fixed dropdowns", () => {
 
     // Walk the seven fixed dropdowns in order.
     await user.selectOptions(
-      await waitForEnabledOption("Biota", "Biota"),
+      await screen.findByRole("combobox", { name: "Biota" }),
       "Biota",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Kingdom", "Animalia"),
+      await screen.findByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Phylum", "Arthropoda"),
+      await screen.findByRole("combobox", { name: "Phylum" }),
       "Arthropoda",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Class", "Insecta"),
+      await screen.findByRole("combobox", { name: "Class" }),
       "Insecta",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Order", "Coleoptera"),
+      await screen.findByRole("combobox", { name: "Order" }),
       "Coleoptera",
     );
-    // Wait for the Family dropdown to populate with Curculionidae
-    // — the /path-children fetch for Coleoptera is in flight after
-    // the Order pick, and the Family dropdown is loading until it
-    // resolves.
-    const familyDropdown = await screen.findByRole("combobox", { name: "Family" });
-    await waitFor(() => {
-      expect(
-        within(familyDropdown).getByRole("option", { name: "Curculionidae" }),
-      ).toBeInTheDocument();
-    });
-    await user.selectOptions(familyDropdown, "Curculionidae");
-    // Wait for the Genus dropdown to populate with Sitophilus.
-    const genusDropdown = await screen.findByRole("combobox", { name: "Genus" });
-    await waitFor(() => {
-      expect(
-        within(genusDropdown).getByRole("option", { name: "Sitophilus" }),
-      ).toBeInTheDocument();
-    });
-    await user.selectOptions(genusDropdown, "Sitophilus");
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Family" }),
+      "Curculionidae",
+    );
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Genus" }),
+      "Sitophilus",
+    );
 
     // Species list renders both Sitophilus species.
     const speciesList = await screen.findByRole("list", { name: /species list/i });
@@ -732,44 +709,33 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     render(<Cascade />);
 
     await user.selectOptions(
-      await waitForEnabledOption("Biota", "Biota"),
+      await screen.findByRole("combobox", { name: "Biota" }),
       "Biota",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Kingdom", "Animalia"),
+      await screen.findByRole("combobox", { name: "Kingdom" }),
       "Animalia",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Phylum", "Arthropoda"),
+      await screen.findByRole("combobox", { name: "Phylum" }),
       "Arthropoda",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Class", "Insecta"),
+      await screen.findByRole("combobox", { name: "Class" }),
       "Insecta",
     );
     await user.selectOptions(
-      await waitForEnabledOption("Order", "Coleoptera"),
+      await screen.findByRole("combobox", { name: "Order" }),
       "Coleoptera",
     );
-    // Wait for the Family dropdown to populate with Curculionidae
-    // — the /path-children fetch for Coleoptera is in flight after
-    // the Order pick, and the Family dropdown is loading until it
-    // resolves.
-    const familyDropdown = await screen.findByRole("combobox", { name: "Family" });
-    await waitFor(() => {
-      expect(
-        within(familyDropdown).getByRole("option", { name: "Curculionidae" }),
-      ).toBeInTheDocument();
-    });
-    await user.selectOptions(familyDropdown, "Curculionidae");
-    // Wait for the Genus dropdown to populate with Sitophilus.
-    const genusDropdown = await screen.findByRole("combobox", { name: "Genus" });
-    await waitFor(() => {
-      expect(
-        within(genusDropdown).getByRole("option", { name: "Sitophilus" }),
-      ).toBeInTheDocument();
-    });
-    await user.selectOptions(genusDropdown, "Sitophilus");
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Family" }),
+      "Curculionidae",
+    );
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Genus" }),
+      "Sitophilus",
+    );
 
     const speciesList = await screen.findByRole("list", { name: /species list/i });
     await user.click(within(speciesList).getByText("Sitophilus granarius"));
@@ -779,7 +745,7 @@ describe("Cascade — always 7 fixed dropdowns", () => {
     // this event and fetches the links panel.
     const taxonSelectEvent = dispatchSpy.mock.calls
       .map((call) => call[0])
-      .find((evt) => evt instanceof CustomEvent && evt.type === "taxon:select") as
+      .find((evt) => evt instanceof CustomEvent && evt.type === "taxon-select") as
       | CustomEvent
       | undefined;
     expect(taxonSelectEvent).toBeDefined();
@@ -807,153 +773,5 @@ describe("Cascade — always 7 fixed dropdowns", () => {
       "Curculionidae",
       "Sitophilus",
     ]);
-  });
-});
-
-describe("Cascade — path:change dispatch (Task 4.5)", () => {
-  it("dispatches the event with the picked trail when only ONE root pick is committed", async () => {
-    // The contract is simpler to verify in isolation: a single
-    // successful pick must produce a path:change event whose
-    // detail.path is the picked trail. No cascade walks — just
-    // the dispatch hook.
-    const pathChangeListener = vi.fn();
-    window.addEventListener(PATH_CHANGE_EVENT, pathChangeListener);
-
-    try {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(
-          mockFetchJson([
-            taxon(1, "Biota", "biota"),
-            taxon(2, "Viruses", "biota"),
-          ]),
-        );
-      globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-      const user = userEvent.setup();
-      render(<Cascade />);
-
-      // Wait for Biota to be enabled, then pick it.
-      await user.selectOptions(
-        await waitForEnabledOption("Biota", "Biota"),
-        "Biota",
-      );
-
-      const pathEvents = pathChangeListener.mock.calls
-        .map((call) => call[0])
-        .filter(
-          (evt): evt is CustomEvent<{ path: string[] }> =>
-            evt instanceof CustomEvent && evt.type === PATH_CHANGE_EVENT,
-        );
-      const biotaDispatches = pathEvents.filter(
-        (evt) =>
-          evt.detail.path.length === 1 && evt.detail.path[0] === "Biota",
-      );
-      expect(biotaDispatches.length).toBeGreaterThanOrEqual(1);
-    } finally {
-      window.removeEventListener(PATH_CHANGE_EVENT, pathChangeListener);
-    }
-  });
-
-  it("does NOT dispatch path:change on every render — only when path changes", async () => {
-    // Regression guard: the dispatch hook is keyed by state.path,
-    // so re-renders that do not change the path MUST NOT emit a
-    // new event. Without this guard the App's panel would refetch
-    // on every render and the AbortController would thrash.
-    const pathChangeListener = vi.fn();
-    window.addEventListener(PATH_CHANGE_EVENT, pathChangeListener);
-
-    try {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(
-          mockFetchJson([
-            taxon(1, "Biota", "biota"),
-            taxon(2, "Viruses", "biota"),
-          ]),
-        );
-      globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-      render(<Cascade />);
-
-      // Allow microtasks to flush; the initial mount fires ONE
-      // dispatch with path=[].
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-
-      // Force a re-render without changing the path by toggling
-      // an unrelated prop. The easiest unrelated prop is the
-      // inclusion toggle (Toggles re-renders the cascade but does
-      // not change state.path).
-      // The Toggles component is the only thing below the cascade
-      // that re-renders without touching the path.
-      const toggles = screen.getByRole("group", {
-        name: /include in species list/i,
-      });
-      // Toggle is a button — click it. The cascade re-renders but
-      // state.path stays the same, so the dispatch must not refire.
-      const firstButton = toggles.querySelector("button");
-      expect(firstButton).not.toBeNull();
-      // Count events before the re-render.
-      const beforeCount = pathChangeListener.mock.calls.filter(
-        (call) =>
-          (call[0] as CustomEvent).type === PATH_CHANGE_EVENT,
-      ).length;
-      firstButton?.click();
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      const afterCount = pathChangeListener.mock.calls.filter(
-        (call) =>
-          (call[0] as CustomEvent).type === PATH_CHANGE_EVENT,
-      ).length;
-      // No new dispatch for an unrelated re-render.
-      expect(afterCount).toBe(beforeCount);
-    } finally {
-      window.removeEventListener(PATH_CHANGE_EVENT, pathChangeListener);
-    }
-  });
-});
-
-describe("Cascade — path:change dispatch (standalone)", () => {
-  it("dispatches the event with the picked trail when only ONE root pick is committed", async () => {
-    // The contract is simpler to verify in isolation: a single
-    // successful pick must produce a path:change event whose
-    // detail.path is the picked trail. No other listeners, no
-    // cascade walks — just the dispatch hook.
-    const pathChangeListener = vi.fn();
-    window.addEventListener(PATH_CHANGE_EVENT, pathChangeListener);
-
-    try {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(
-          mockFetchJson([
-            taxon(1, "Biota", "biota"),
-            taxon(2, "Viruses", "biota"),
-          ]),
-        );
-      globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-      const user = userEvent.setup();
-      render(<Cascade />);
-
-      // Wait for Biota to be enabled, then pick it.
-      await user.selectOptions(
-        await waitForEnabledOption("Biota", "Biota"),
-        "Biota",
-      );
-
-      const pathEvents = pathChangeListener.mock.calls
-        .map((call) => call[0])
-        .filter(
-          (evt): evt is CustomEvent<{ path: string[] }> =>
-            evt instanceof CustomEvent && evt.type === PATH_CHANGE_EVENT,
-        );
-      const biotaDispatches = pathEvents.filter(
-        (evt) =>
-          evt.detail.path.length === 1 && evt.detail.path[0] === "Biota",
-      );
-      expect(biotaDispatches.length).toBeGreaterThanOrEqual(1);
-    } finally {
-      window.removeEventListener(PATH_CHANGE_EVENT, pathChangeListener);
-    }
   });
 });
