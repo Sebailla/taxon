@@ -125,12 +125,8 @@ describe("App — breadcrumb-links panel", () => {
     // After both events settle, exactly ONE fetch must remain in
     // flight (the second), and the panel must render the result
     // for the second path.
-    let resolveFirst:
-      | ((value: Response | PromiseLike<Response>) => void)
-      | null = null;
-    let resolveSecond:
-      | ((value: Response | PromiseLike<Response>) => void)
-      | null = null;
+    let resolveFirst: ((value: Response) => void) | null = null;
+    let resolveSecond: ((value?: Response) => void) | null = null;
 
     const fetchMock = vi.fn().mockImplementation(
       (input: RequestInfo | URL) => {
