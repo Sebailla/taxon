@@ -5,22 +5,44 @@ and the 12-link dispatch grid. Layout matches the Phase 3 design:
 two-column on desktop (cascade + list on the left, breadcrumb +
 links on the right), single-column on mobile.
 
-The App owns the species selection state. The Cascade emits the
-species + breadcrumb when a species row is clicked; the App stores
-it and triggers the links fetch.
+The App owns three pieces of state:
+
+- ``resolved`` — the species the user clicked. Set by the
+  ``taxon:select`` CustomEvent (post-resolution only).
+- ``links`` / ``linksStatus`` — the 12 dispatch URLs for the
+  resolved species. Fetched on ``taxon:select`` and on any
+  path-change that invalidates them.
+- ``cascadePath`` — the mid-cascade path broadcast by the
+  ``path:change`` CustomEvent. Drives the breadcrumb visibility
+  AND the per-taxon breadcrumb-links panel.
+
+The breadcrumb-links panel and the species-links panel are
+mutually exclusive (last-clicked wins): a species click resets
+``cascadePath``'s panel; a segment click resets the species
+panel. Each panel uses its own ``AbortController`` so a stale
+fetch never resolves into a stale render.
 */
 
 import { useEffect, useState } from "react";
 
 import type {
+  ApiResult,
   SearchLinkItem,
   SpeciesLookupResponse,
+  TaxonLinksResponse,
 } from "./api";
-import { fetchLinks } from "./api";
+import { fetchLinks, fetchTaxonLinks } from "./api";
 import { TAXON_SELECT_EVENT, parseTaxonSelectEvent } from "./events/taxonSelect";
-import { Cascade } from "./components/Cascade";
+import { Cascade, PATH_CHANGE_EVENT } from "./components/Cascade";
 import { SpeciesLinks } from "./components/SpeciesLinks";
 import { Breadcrumb } from "./components/Breadcrumb";
+import { useCascadePath } from "./store/cascadePath";
+
+type BreadcrumbLinksState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ok"; data: TaxonLinksResponse }
+  | { status: "error"; detail: string };
 
 export function App(): JSX.Element {
   const [resolved, setResolved] = useState<SpeciesLookupResponse | null>(null);
@@ -29,6 +51,9 @@ export function App(): JSX.Element {
     "idle",
   );
   const [parentSegments, setParentSegments] = useState<string[]>([]);
+  const cascadePath = useCascadePath((state) => state.path);
+  const [breadcrumbLinks, setBreadcrumbLinks] =
+    useState<BreadcrumbLinksState>({ status: "idle" });
 
   // Listen for species selection: the Cascade emits a (row, breadcrumb)
   // pair whenever the user clicks a species row. The detail is
@@ -52,6 +77,9 @@ export function App(): JSX.Element {
         breadcrumb: detail.breadcrumb,
       });
       setParentSegments(detail.parentSegments);
+      // Last-clicked wins: a species click clears the breadcrumb
+      // panel so the two panels never coexist.
+      setBreadcrumbLinks({ status: "idle" });
     };
     window.addEventListener(TAXON_SELECT_EVENT, handler);
     return () => window.removeEventListener(TAXON_SELECT_EVENT, handler);
@@ -78,6 +106,71 @@ export function App(): JSX.Element {
     return () => ctrl.abort();
   }, [resolved, parentSegments]);
 
+  // Breadcrumb-links panel: keyed by the path reference so every
+  // distinct pick fires a fresh fetch and the previous in-flight
+  // one is aborted on cleanup. The path comes from the Zustand
+  // store which is fed by both the Cascade reducer (real user
+  // picks) and the App's own ``path:change`` listener
+  // (event-driven picks from tests or future producers).
+  //
+  // The store's ``setPath`` is a no-op for an identical-content
+  // array, so the cascadePath reference is stable across
+  // redundant dispatches and the effect does not refire.
+  useEffect(() => {
+    if (cascadePath.length === 0) {
+      // No path = no panel; clear any stale data.
+      setBreadcrumbLinks({ status: "idle" });
+      return;
+    }
+    const ctrl = new AbortController();
+    setBreadcrumbLinks({ status: "loading" });
+    void fetchTaxonLinks(cascadePath, { signal: ctrl.signal }).then(
+      (result: ApiResult<TaxonLinksResponse>) => {
+        if (ctrl.signal.aborted) return;
+        if (result.status === "ok") {
+          setBreadcrumbLinks({ status: "ok", data: result.data });
+        } else if (result.status === "not-found") {
+          setBreadcrumbLinks({ status: "error", detail: result.detail });
+        } else if (result.status === "error") {
+          setBreadcrumbLinks({ status: "error", detail: result.detail });
+        } else {
+          setBreadcrumbLinks({ status: "error", detail: "unknown error" });
+        }
+      },
+    );
+    return () => ctrl.abort();
+  }, [cascadePath]);
+
+  // Listen for ``path:change`` events so any producer
+  // (the Cascade in production, tests in development) can
+  // drive the panel. The Cascade also writes through the
+  // Zustand store directly, but listening here keeps the
+  // App correct even if a future producer skips the store
+  // and dispatches the event alone.
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const custom = e as CustomEvent<{ path?: string[] }>;
+      const detail = custom.detail;
+      if (!detail || !Array.isArray(detail.path)) return;
+      useCascadePath.getState().setPath(detail.path);
+    };
+    window.addEventListener(PATH_CHANGE_EVENT, handler);
+    return () => window.removeEventListener(PATH_CHANGE_EVENT, handler);
+  }, []);
+
+  // The breadcrumb is visible whenever the cascade path has at
+  // least one entry, regardless of whether a species has been
+  // resolved yet (Task 4.6 — drop the resolved !== null gate).
+  const breadcrumbTrail = cascadePath;
+  const breadcrumbHandler = (trail: string[]): void => {
+    // The click handler is a no-op now: the segment click already
+    // set the cascade path via the Cascade's reducer dispatch, so
+    // by the time the App's handler runs, ``cascadePath`` is
+    // already updated. We keep the handler as a thin wrapper so
+    // future PRs can layer analytics or side-effects on top.
+    void trail;
+  };
+
   return (
     <main className="mx-auto min-h-screen max-w-page px-6 py-8">
       <header className="mb-8">
@@ -91,16 +184,42 @@ export function App(): JSX.Element {
         </div>
 
         <aside className="space-y-6">
-          {resolved !== null ? <Breadcrumb trail={resolved.breadcrumb} /> : null}
-          {links !== null ? <SpeciesLinks links={links} /> : null}
-          {links === null && linksStatus === "loading" ? (
+          {breadcrumbTrail.length > 0 ? (
+            <Breadcrumb
+              trail={breadcrumbTrail}
+              onSelect={breadcrumbHandler}
+            />
+          ) : null}
+          {/* Last-clicked wins: show species links ONLY when the
+              breadcrumb panel is idle; show breadcrumb links when
+              they are loading / ok / error. */}
+          {resolved !== null && breadcrumbLinks.status === "idle" ? (
+            <>
+              {links !== null ? <SpeciesLinks links={links} /> : null}
+              {links === null && linksStatus === "loading" ? (
+                <p className="rounded-card border border-border bg-surface p-4 text-sm text-slate">
+                  Loading links…
+                </p>
+              ) : null}
+              {links === null && linksStatus === "error" ? (
+                <p className="rounded-card border border-red bg-red-50 p-4 text-sm text-red">
+                  Could not load links.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+          {breadcrumbLinks.status === "ok" ? (
+            <SpeciesLinks links={breadcrumbLinks.data.links} />
+          ) : null}
+          {breadcrumbLinks.status === "loading" &&
+          resolved === null ? (
             <p className="rounded-card border border-border bg-surface p-4 text-sm text-slate">
               Loading links…
             </p>
           ) : null}
-          {links === null && linksStatus === "error" ? (
+          {breadcrumbLinks.status === "error" ? (
             <p className="rounded-card border border-red bg-red-50 p-4 text-sm text-red">
-              Could not load links.
+              Could not load links: {breadcrumbLinks.detail}
             </p>
           ) : null}
         </aside>
@@ -108,3 +227,8 @@ export function App(): JSX.Element {
     </main>
   );
 }
+
+// PATH_CHANGE_EVENT is re-exported so test files can import it
+// from the App module if they prefer. The Cascade owns the
+// constant; this re-export is for ergonomic convenience only.
+export { PATH_CHANGE_EVENT };

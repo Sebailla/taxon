@@ -34,22 +34,22 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Frontend RED
 
-- [ ] 3.1 New `frontend/tests/Breadcrumb.dynamic.test.tsx`: render w/ `onSelect`; click `Chordata`; handler called `["Animalia","Chordata"]`. Fails (no button).
-- [ ] 3.2 Click first segment → handler `["Animalia"]`; deepest `aria-current="page"`. Fails.
-- [ ] 3.3 Render w/o `onSelect`; click does not throw; `<nav>` renders. Fails.
-- [ ] 3.4 New `frontend/tests/store.cascadePath.test.ts`: `setPath(["A","B"])` updates state; subscriber fires. Fails.
-- [ ] 3.5 New `frontend/tests/api.taxonLinks.test.ts`: mock 200 `{taxon,links:13}`; URL `/Animalia%7CChordata/taxon-links`, `status==="ok"`, `links.length==13`. Fails.
-- [ ] 3.6 404: mock 404 `detail="taxon not found: 'Atlantis'"`; `status==="not-found"`. Fails.
-- [ ] 3.7 New `frontend/tests/App.taxonLinks.test.tsx`: dispatch `path:change` `["Animalia","Chordata"]`; advance timers; one fetch fires; panel renders 13 `<a>`. Fails.
-- [ ] 3.8 Dispatch `["Animalia","Chordata"]` then `["Animalia"]` before first resolves; exactly one in-flight `fetch` survives. Fails.
+- [x] 3.1 New `frontend/tests/Breadcrumb.dynamic.test.tsx`: render w/ `onSelect`; click `Chordata`; handler called `["Animalia","Chordata"]`. Fails (no button).
+- [x] 3.2 Click first segment → handler `["Animalia"]`; deepest `aria-current="page"`. Fails.
+- [x] 3.3 Render w/o `onSelect`; click does not throw; `<nav>` renders. Fails.
+- [x] 3.4 New `frontend/tests/store.cascadePath.test.ts`: `setPath(["A","B"])` updates state; subscriber fires. Fails.
+- [x] 3.5 New `frontend/tests/api.taxonLinks.test.ts`: mock 200 `{taxon,links:13}`; URL `/Animalia%7CChordata/taxon-links`, `status==="ok"`, `links.length==13`. Fails.
+- [x] 3.6 404: mock 404 `detail="taxon not found: 'Atlantis'"`; `status==="not-found"`. Fails.
+- [x] 3.7 New `frontend/tests/App.taxonLinks.test.tsx`: dispatch `path:change` `["Animalia","Chordata"]`; advance timers; one fetch fires; panel renders 13 `<a>`. Fails.
+- [x] 3.8 Dispatch `["Animalia","Chordata"]` then `["Animalia"]` before first resolves; exactly one in-flight `fetch` survives. Fails.
 
 ## Phase 4: Frontend GREEN
 
-- [ ] 4.1 Add `"zustand": "^5"` to `frontend/package.json` `dependencies`; `npm install`.
-- [ ] 4.2 Add `TaxonLinksResponse` + `fetchTaxonLinks(pathSegments, init?)` to `frontend/src/api.ts` (mirror `fetchPathChildren`). 3.5, 3.6 pass.
-- [ ] 4.3 New `frontend/src/store/cascadePath.ts`: zustand store `{path:string[]; setPath(p:string[]):void}` default `path:[]`. 3.4 passes.
-- [ ] 4.4 Modify `Breadcrumb.tsx`: add `onSelect?: (path: string[]) => void`; segments `<button type="button">` w/ `aria-current="page"` on deepest; keep chevron+`font-mono`+`bg-surface`. 3.1–3.3 pass.
-- [ ] 4.5 Modify `Cascade.tsx`: dispatch `path:change` `CustomEvent<{path:string[]}>` in `set-path` consumer when `state.path` changes; verify via `cascadeDynamicTiers.test.tsx`.
-- [ ] 4.6 Modify `App.tsx`: add `breadcrumbLinks` state + `useEffect` keyed by `cascadePath.join("|")` w/ `AbortController`; abort on cleanup; `setResolved` clears panel. Drop `resolved !== null` gate; render `<Breadcrumb>` when `cascadePath.length > 0`. 3.7, 3.8 pass.
-- [ ] 4.7 `npx vitest run`; zero regression in `Breadcrumb.test.tsx`, `api.test.ts`, `Cascade.ui.test.tsx`, `taxonSelect.test.ts`.
-- [ ] 4.8 `npm run typecheck` + `npm run lint`; fix strict-TS / unused-prop warnings.
+- [x] 4.1 Add `"zustand": "^5"` to `frontend/package.json` `dependencies`; `npm install`.
+- [x] 4.2 Add `TaxonLinksResponse` + `fetchTaxonLinks(pathSegments, init?)` to `frontend/src/api.ts` (mirror `fetchPathChildren`). 3.5, 3.6 pass.
+- [x] 4.3 New `frontend/src/store/cascadePath.ts`: zustand store `{path:string[]; setPath(p:string[]):void}` default `path:[]`. 3.4 passes.
+- [x] 4.4 Modify `Breadcrumb.tsx`: add `onSelect?: (path: string[]) => void`; segments `<button type="button">` w/ `aria-current="page"` on deepest; keep chevron+`font-mono`+`bg-surface`. 3.1–3.3 pass.
+- [x] 4.5 Modify `Cascade.tsx`: dispatch `path:change` `CustomEvent<{path:string[]}>` in `set-path` consumer when `state.path` changes; verify via `cascadeDynamicTiers.test.tsx`.
+- [x] 4.6 Modify `App.tsx`: add `breadcrumbLinks` state + `useEffect` keyed by `cascadePath` w/ `AbortController`; abort on cleanup; `setResolved` clears panel. Drop `resolved !== null` gate; render `<Breadcrumb>` when `cascadePath.length > 0`. 3.7, 3.8 pass.
+- [x] 4.7 `npx vitest run`; zero regression in `Breadcrumb.test.tsx`, `api.test.ts`, `Cascade.ui.test.tsx`, `taxonSelect.test.ts`.
+- [x] 4.8 `npm run typecheck` + `npm run lint`; fix strict-TS / unused-prop warnings.

@@ -73,6 +73,12 @@ import {
   fetchPathChildren,
   fetchSpeciesList,
 } from "../api";
+import { useCascadePath } from "../store/cascadePath";
+
+/** Name of the CustomEvent the Cascade dispatches whenever
+ *  ``state.path`` changes. The App listens for it to keep its
+ *  ``cascadePath`` store in sync with the cascade's reducer. */
+export const PATH_CHANGE_EVENT = "path:change";
 
 /** The seven fixed tier slots the cascade renders, in order. */
 const FIXED_TIERS: ReadonlyArray<{
@@ -154,6 +160,31 @@ export function Cascade(): JSX.Element {
       },
     );
     return () => ctrl.abort();
+  }, [state.path]);
+
+  // Mirror the reducer's ``state.path`` into the global
+  // ``cascadePath`` Zustand store, and broadcast the change to
+  // window listeners via a ``path:change`` CustomEvent. The
+  // App listens for the event to drive the breadcrumb-links
+  // panel; the store is the single source of truth for any
+  // reader that needs synchronous access to the path.
+  //
+  // The dispatch fires only when ``state.path`` actually
+  // changes — the reducer emits a new array reference per
+  // ``set-path`` action, so identity equality is enough. The
+  // ``useCascadePath.setPath`` call inside the store is a
+  // no-op for an identical content path (see
+  // ``store/cascadePath.ts``), so a redundant dispatch does
+  // not refire subscribers.
+  const prevPathRef = useRef<string[]>(state.path);
+  if (prevPathRef.current !== state.path) {
+    prevPathRef.current = state.path;
+  }
+  useEffect(() => {
+    useCascadePath.getState().setPath(state.path);
+    window.dispatchEvent(
+      new CustomEvent(PATH_CHANGE_EVENT, { detail: { path: state.path } }),
+    );
   }, [state.path]);
 
   // When the deepest snapshot is a confirmed leaf (no children

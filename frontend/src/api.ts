@@ -90,6 +90,21 @@ export interface LinksResponse {
   links: SearchLinkItem[];
 }
 
+/** Envelope returned by ``GET /api/{path}/taxon-links``.
+
+Mirrors the backend's ``TaxonLinksResponse`` in
+``taxon/api/schemas.py``: the deepest taxon resolved by the
+path + the 13 search-source dispatch links substituted with
+that taxon's canonical ``name``. Used by the per-taxon
+breadcrumb-links panel — every segment click resolves the
+path to its deepest taxon and renders the same link grid the
+species row produces.
+*/
+export interface TaxonLinksResponse {
+  taxon: TaxonResponse;
+  links: SearchLinkItem[];
+}
+
 export interface NextTier {
   rank: string;
   label: string;
@@ -292,6 +307,45 @@ export async function fetchSpeciesList(
   const query = params.toString();
   const tail = query.length > 0 ? `?${query}` : "";
   return apiGet<SpeciesListResponse>(`/species-list?path=${path}${tail}`, init);
+}
+
+/**
+ * Path-aware taxon-links resolver.
+ *
+ * Walks the caller-supplied cascade path (no epithet) and
+ * returns the 13-link substitution for the deepest taxon the
+ * resolver lands on. Used by the breadcrumb segment click —
+ * clicking a segment asks for the links whose ``{q}`` is the
+ * canonical name of that taxon's row, not of any species
+ * below it.
+ *
+ * The path is encoded with ``encodeURIComponent`` per
+ * segment, then joined with ``%7C`` (the percent-encoded
+ * pipe). The backend captures the whole suffix as a single
+ * ``{path:path}`` segment and splits on ``|`` server-side;
+ * leaving the pipe un-encoded would technically still work
+ * for the path-children query-string endpoint, but the
+ * ``{path:path}`` capture encodes the separator so the
+ * captured string round-trips deterministically through any
+ * proxy that strips query strings.
+ *
+ * The backend enforces a 1–7 segment cap. The client treats
+ * any 4xx response that does not carry the discriminated
+ * union we know about as a generic ``error`` so the App
+ * panel can show the server message.
+ */
+export async function fetchTaxonLinks(
+  pathSegments: string[],
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<TaxonLinksResponse>> {
+  const path = pathSegments
+    .map((s) =>
+      encodeURIComponent(s).replace(/[!'()*]/g, (c) =>
+        `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
+      ),
+    )
+    .join("%7C");
+  return apiGet<TaxonLinksResponse>(`/${path}/taxon-links`, init);
 }
 
 export async function fetchSpeciesByPair(
