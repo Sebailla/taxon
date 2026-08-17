@@ -23,7 +23,7 @@ export function Breadcrumb({ trail, onSelect }: BreadcrumbProps): JSX.Element {
   const deepestIndex = trail.length - 1;
   return (
     <nav
-      aria-label="Resolved species breadcrumb"
+      aria-label="Cascade path breadcrumb"
       className="rounded-card border border-border bg-surface p-4"
     >
       <h2 className="mb-2 text-sm font-medium text-slate">Breadcrumb</h2>
