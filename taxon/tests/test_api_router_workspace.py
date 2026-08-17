@@ -20,6 +20,7 @@ rather than by ``taxa.id``.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -62,7 +63,7 @@ def app(tmp_path: Path) -> FastAPI:
 
 
 @pytest.fixture
-def client(app: FastAPI) -> TestClient:
+def client(app: FastAPI) -> Iterator[TestClient]:
     # The ``with`` block drives the ``lifespan`` context so
     # ``app.state.app_state`` is populated before the first request.
     with TestClient(app) as client:

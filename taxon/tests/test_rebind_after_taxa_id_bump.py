@@ -15,6 +15,7 @@ asserts that every workspace read still resolves the same rows.
 
 from __future__ import annotations
 
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from taxon.api.workspace import (
@@ -26,7 +27,7 @@ from taxon.api.workspace import (
 from taxon.schema import Base, Taxon
 
 
-def _engine():
+def _engine() -> Engine:
     from sqlalchemy import create_engine
 
     return create_engine("sqlite:///:memory:")
@@ -200,7 +201,9 @@ def test_workspace_tables_have_no_fk_to_taxa_id() -> None:
     for model in (SpeciesExplored, SpeciesFolder, LinkVisited):
         fks = list(model.__table__.foreign_keys)
         fk_constraints = [
-            c for c in model.__table__.constraints if isinstance(c, ForeignKeyConstraint)
+            c
+            for c in model.__table__.constraints  # type: ignore[attr-defined]
+            if isinstance(c, ForeignKeyConstraint)
         ]
         assert not fks, f"{model.__name__} has FKs: {fks}"
         assert not fk_constraints, f"{model.__name__} has ForeignKeyConstraint: {fk_constraints}"

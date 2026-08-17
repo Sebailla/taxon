@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.engine import Engine
 
 from taxon.api.workspace import WORKSPACE_TABLES
 from taxon.schema import Base
@@ -43,14 +44,14 @@ def _resolve_database_url(database_url: str | None) -> str:
     return resolved
 
 
-def _missing_tables(engine, table_names: tuple[str, ...]) -> list[str]:
+def _missing_tables(engine: Engine, table_names: tuple[str, ...]) -> list[str]:
     """Return the subset of ``table_names`` not present in the engine."""
     inspector = inspect(engine)
     existing = set(inspector.get_table_names())
     return [name for name in table_names if name not in existing]
 
 
-def _run_dry_run(engine, table_names: tuple[str, ...]) -> int:
+def _run_dry_run(engine: Engine, table_names: tuple[str, ...]) -> int:
     missing = _missing_tables(engine, table_names)
     if missing:
         print(
@@ -62,7 +63,7 @@ def _run_dry_run(engine, table_names: tuple[str, ...]) -> int:
     return 0
 
 
-def _run_apply(engine, table_names: tuple[str, ...]) -> int:
+def _run_apply(engine: Engine, table_names: tuple[str, ...]) -> int:
     missing = _missing_tables(engine, table_names)
     if not missing:
         print(f"[apply] all {len(table_names)} workspace tables already present; no changes made")

@@ -75,7 +75,7 @@ def test_species_explored_primary_key_is_genus_epithet() -> None:
     The composite primary key is what makes the row orthogonal to
     ``taxa.id`` — bumping ``taxa.id`` does not invalidate this row.
     """
-    pk_columns = [col.name for col in SpeciesExplored.__table__.primary_key.columns]
+    pk_columns = [col.name for col in SpeciesExplored.__table__.primary_key.columns]  # type: ignore[attr-defined]
     assert pk_columns == ["genus", "epithet"], pk_columns
 
 
@@ -85,7 +85,7 @@ def test_species_folders_primary_key_is_genus_epithet() -> None:
     The ``path`` column is UNIQUE but NOT part of the primary key;
     keys on ``(genus, epithet)`` so re-imports do not orphan rows.
     """
-    pk_columns = [col.name for col in SpeciesFolder.__table__.primary_key.columns]
+    pk_columns = [col.name for col in SpeciesFolder.__table__.primary_key.columns]  # type: ignore[attr-defined]
     assert pk_columns == ["genus", "epithet"], pk_columns
 
 
@@ -95,7 +95,7 @@ def test_link_visited_primary_key_is_genus_epithet_source() -> None:
     The third column is the canonical source name (NOT the URL) so
     the row identity is stable across per-substitution URL changes.
     """
-    pk_columns = [col.name for col in LinkVisited.__table__.primary_key.columns]
+    pk_columns = [col.name for col in LinkVisited.__table__.primary_key.columns]  # type: ignore[attr-defined]
     assert pk_columns == ["genus", "epithet", "source_label"], pk_columns
 
 
@@ -123,7 +123,7 @@ def _assert_no_foreign_keys(model: type[Base]) -> None:
     )
     # ``ForeignKeyConstraint`` covers explicit-table-level constraints
     # that don't appear on individual columns.
-    fk_constraints = [c for c in model.__table__.constraints if isinstance(c, ForeignKeyConstraint)]
+    fk_constraints = [c for c in model.__table__.constraints if isinstance(c, ForeignKeyConstraint)]  # type: ignore[attr-defined]
     assert not fk_constraints, (
         f"{model.__name__} must not declare ForeignKeyConstraint; found: {fk_constraints}"
     )
