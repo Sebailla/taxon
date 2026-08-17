@@ -310,6 +310,77 @@ class PathChildrenEnvelope(_ORMBase):
     next_tiers: list[NextTier] | None = None
 
 
+# ---------------------------------------------------------------------------
+# Taxonomic-tree-browse (PR 1 of ``arbol-col-browse``)
+# ---------------------------------------------------------------------------
+
+
+class TreeNodeResponse(TaxonResponse):
+    """Taxon row enriched with the derived fields the tree UI needs.
+
+    ``has_children`` is the EXISTS pre-filter so the caret renders
+    without a second round-trip. ``species_count`` is the descendant
+    count at species-rank for non-leaf parents; ``None`` for leaves
+    and for parents whose subtree is too expensive to walk
+    (> :data:`SPECIES_COUNT_LAZY_NULL_THRESHOLD` direct children).
+    ``authorship`` carries the citation tail split from
+    ``display_name`` so the row format ``rank: Name Authorship • N spp.``
+    can render without a second column.
+    """
+
+    has_children: bool
+    species_count: int | None
+    authorship: str
+
+
+class TreeChildrenResponse(_ORMBase):
+    """Envelope for ``GET /api/tree/children?parent_id={id}``.
+
+    ``parent`` is the resolved TaxonResponse (or ``None`` when the
+    caller asked for the roots with ``parent_id=0``). ``children``
+    is the ordered list of direct children carrying every
+    :class:`TreeNodeResponse` field. ``next_cursor`` is non-empty
+    when the result set exceeded the page ``limit``; absent
+    otherwise.
+    """
+
+    parent: TaxonResponse | None
+    children: list[TreeNodeResponse]
+    next_cursor: str | None = None
+
+
+class TreeSearchHit(_ORMBase):
+    """Single hit in the ``GET /api/tree/search?q=`` response.
+
+    ``id`` and ``parent_id`` mirror :class:`TaxonResponse` — local
+    rows emit ``int``, ChecklistBank rows would emit opaque strings
+    (the tree browse never queries CLB, but the contract stays
+    symmetric with the rest of the cascade surface). ``relevance``
+    names the match tier so the UI can label badges if it ever
+    wants to: ``"exact"``, ``"prefix"``, or ``"substring"``.
+    """
+
+    id: int | str
+    name: Annotated[str, Field(min_length=1)]
+    display_name: str
+    rank: str
+    parent_id: int | str | None = None
+    has_children: bool = False
+    relevance: str
+
+
+class TreeSearchResponse(_ORMBase):
+    """Envelope for ``GET /api/tree/search?q={q}``.
+
+    ``items`` carries the ranked hits (exact > prefix > substring,
+    then by ``display_name`` length ascending); the wire shape stays
+    bounded to 8 entries so the autocomplete stays snappy on
+    :file:`data/col.db`.
+    """
+
+    items: list[TreeSearchHit]
+
+
 __all__ = [
     "AmbiguityCandidate",
     "CandidateRef",
@@ -326,4 +397,8 @@ __all__ = [
     "SpeciesPathResponse",
     "TaxonLinksResponse",
     "TaxonResponse",
+    "TreeChildrenResponse",
+    "TreeNodeResponse",
+    "TreeSearchHit",
+    "TreeSearchResponse",
 ]

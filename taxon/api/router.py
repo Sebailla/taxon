@@ -75,6 +75,10 @@ from taxon.api.schemas import (
     SpeciesLookupResponse,
     TaxonLinksResponse,
     TaxonResponse,
+    TreeChildrenResponse,
+    TreeNodeResponse,
+    TreeSearchHit,
+    TreeSearchResponse,
 )
 from taxon.api.species import (
     build_breadcrumb,
@@ -90,6 +94,12 @@ from taxon.api.sqlite_resolver import (
 )
 from taxon.api.sqlite_resolver import (
     list_species_under_path as sqlite_list_species_under_path,
+)
+from taxon.api.tree import (
+    list_tree_children as sqlite_list_tree_children,
+)
+from taxon.api.tree import (
+    search_taxon as sqlite_search_taxon,
 )
 from taxon.schema import Taxon
 from taxon.search_links import SearchLink, build_search_links, load_templates
@@ -649,6 +659,176 @@ def species_links(
 # segments; an eighth indicates malformed input or an attempted route
 # collision with the species-links endpoint.
 _TAXON_LINKS_MAX_SEGMENTS: int = 7
+
+
+# ---------------------------------------------------------------------------
+# Taxonomic-tree-browse endpoints (arbol-col-browse PR 1)
+# NOTE: registered BEFORE ``/{path:path}/taxon-links`` (declared further
+# down) so the catch-all does NOT shadow ``/api/tree/*`` by matching the
+# literal ``tree/children`` / ``tree/search`` segments against the path
+# parameter. FastAPI matches routes in registration order; the order
+# matters. The regression test
+# ``test_api_router_tree::test_tree_endpoints_registered_before_taxon_links_catchall``
+# pins the contract.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/tree/children",
+    response_model=TreeChildrenResponse,
+)
+def get_tree_children(
+    parent_id: Annotated[
+        int,
+        Query(
+            description=(
+                "Integer taxon id. ``parent_id=0`` returns every row with "
+                "``parent_id IS NULL`` (the CoL tree roots: Archaea + "
+                "Bacteria + Eukaryota + Viruses + ?incertae sedis). The "
+                "endpoint walks direct children only -- it does NOT "
+                "synthesize a Biota superdomain. Returns 404 when "
+                "``parent_id`` matches no taxon."
+            )
+        ),
+    ],
+    include_extinct: Annotated[
+        bool,
+        Query(description="Whether extinct taxa appear in the result."),
+    ] = True,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=500, description="Hard cap on the number of children returned."),
+    ] = 200,
+    cursor: Annotated[
+        int | None,
+        Query(description="Pagination cursor; reserved for future expansion."),
+    ] = None,
+    session: Annotated[Session, Depends(get_db)] = ...,  # type: ignore[assignment]
+) -> TreeChildrenResponse:
+    """Return the direct children of ``parent_id`` enriched for the tree UI.
+
+    Each child carries ``has_children`` (the EXISTS pre-filter so the
+    caret renders without a second round-trip), ``species_count``
+    (descendant count at species rank via recursive CTE, lazy-nulled
+    above the threshold for breadth cost), and ``authorship``
+    (citation tail split from ``display_name`` so the row format
+    renders without a second column).
+
+    The endpoint returns the data the React tree component needs to
+    render one caret row per direct child; the recursive descent is
+    the responsibility of the frontend when the user expands a caret.
+    """
+    _ = cursor  # pagination wired in follow-up PR
+    parent_row, children = sqlite_list_tree_children(
+        session,
+        parent_id,
+        include_extinct=include_extinct,
+        limit=limit,
+        cursor=cursor,
+    )
+    if parent_id != 0 and parent_row is None:
+        raise NotFoundError(f"parent not found: parent_id={parent_id}")
+    parent_response: TaxonResponse | None = (
+        TreeNodeResponse(
+            id=parent_row.id,
+            name=parent_row.name,
+            display_name=parent_row.display_name,
+            rank=parent_row.rank,
+            parent_id=parent_row.parent_id,
+            authorship=parent_row.authorship,
+            has_children=parent_row.has_children,
+            species_count=parent_row.species_count,
+            is_synonym=parent_row.is_synonym,
+            is_extinct=parent_row.is_extinct,
+            is_uncertain=parent_row.is_uncertain,
+            is_unassigned=parent_row.is_unassigned,
+        )
+        if parent_row is not None
+        else None
+    )
+    child_responses = [
+        TreeNodeResponse(
+            id=child.id,
+            name=child.name,
+            display_name=child.display_name,
+            rank=child.rank,
+            parent_id=child.parent_id,
+            authorship=child.authorship,
+            has_children=child.has_children,
+            species_count=child.species_count,
+            is_synonym=child.is_synonym,
+            is_extinct=child.is_extinct,
+            is_uncertain=child.is_uncertain,
+            is_unassigned=child.is_unassigned,
+        )
+        for child in children
+    ]
+    return TreeChildrenResponse(
+        parent=parent_response,
+        children=child_responses,
+        next_cursor=None,
+    )
+
+
+@router.get(
+    "/tree/search",
+    response_model=TreeSearchResponse,
+)
+def get_tree_search(
+    q: Annotated[
+        str,
+        Query(
+            description=(
+                "Free-text search against ``Taxon.name`` and "
+                "``Taxon.display_name``. Ranked exact > prefix > "
+                "substring; ties break by ``display_name`` length "
+                "ascending. Empty / whitespace queries return "
+                "``items: []`` with no SQL round-trip. Hard cap is "
+                "``limit`` (8 default)."
+            ),
+            min_length=0,
+            max_length=200,
+        ),
+    ] = "",
+    limit: Annotated[
+        int,
+        Query(ge=1, le=20, description="Maximum number of hits returned."),
+    ] = 8,
+    include_extinct: Annotated[
+        bool,
+        Query(description="Whether extinct taxa appear in the result."),
+    ] = True,
+    session: Annotated[Session, Depends(get_db)] = ...,  # type: ignore[assignment]
+) -> TreeSearchResponse:
+    """Return ranked hits for the "Find taxon" autocomplete.
+
+    The 200ms debounce and the 8-row cap live in the frontend
+    (this endpoint always returns synchronously); the backend keeps
+    the LIKE matches tight by over-fetching a small multiple and
+    re-ranking client-side. The p95 latency target is 200ms against
+    ``data/col.db``; the bench in ``design.md`` (search latency
+    section) confirms it.
+    """
+    hits = sqlite_search_taxon(
+        session,
+        q,
+        limit=limit,
+        include_extinct=include_extinct,
+    )
+    return TreeSearchResponse(
+        items=[
+            TreeSearchHit(
+                id=hit.id,
+                name=hit.name,
+                display_name=hit.display_name,
+                rank=hit.rank,
+                parent_id=hit.parent_id,
+                has_children=hit.has_children,
+                relevance=hit.relevance,
+            )
+            for hit in hits
+        ]
+    )
 
 
 @router.get(
