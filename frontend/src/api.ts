@@ -112,6 +112,52 @@ export interface NextTier {
   children: TaxonResponse[];
 }
 
+/**
+ * Tree node payload — the items the TaxonomicTree (PR 3) renders.
+ *
+ * Extends :interface:`TaxonResponse` with the three fields the
+ * taxonomy tree needs but the legacy cascade does not:
+ *
+ * - ``has_children`` — pre-computed via EXISTS so the row's caret
+ *   can render without a second fetch.
+ * - ``species_count`` — descendant species count, ``null`` when the
+ *   parent has >100k direct children (the recursive CTE would block
+ *   the response).
+ * - ``authorship`` — the citation tail split from ``display_name``
+ *   so the row can render ``rank: Name Authorship • N spp.`` without
+ *   re-parsing the display name on every render.
+ */
+export interface TreeNodeResponse extends TaxonResponse {
+  has_children: boolean;
+  species_count: number | null;
+  authorship: string;
+}
+
+/**
+ * Envelope of ``GET /api/tree/children?parent_id=N``.
+ *
+ * Mirrors the backend's ``TreeChildrenResponse``: the parent
+ * (the taxon the request resolved to) + the direct children +
+ * an opaque ``next_cursor`` (always ``null`` for the first PR; the
+ * 200-row cap fits in a single page).
+ */
+export interface TreeChildrenResponse {
+  parent: TreeNodeResponse;
+  children: TreeNodeResponse[];
+  next_cursor: string | null;
+}
+
+/**
+ * Envelope of ``GET /api/tree/search?q=…``.
+ *
+ * Mirrors the backend's ``TreeSearchResponse``. The backend caps
+ * the result at 8 items (exact > prefix > substring ranking) so
+ * the frontend never has to truncate.
+ */
+export interface TreeSearchResponse {
+  items: TreeNodeResponse[];
+}
+
 export interface PathChildrenResponse {
   parent: TaxonResponse;
   children: TaxonResponse[];
@@ -378,6 +424,170 @@ export async function fetchLinks(
     `/${encodeSegments([...breadcrumb, epithet])}/links`,
     init,
   );
+}
+
+/** Default row cap per ``/api/tree/children`` request.
+
+The backend defaults to 200 rows per call. The frontend reuses
+this value when building the URL inline so the lazy fetch and
+the cache invalidation share the same constant.
+*/
+export const TREE_CHILDREN_DEFAULT_LIMIT = 200;
+
+/** Hard cap for the search dropdown (8 results per the spec). */
+export const TREE_SEARCH_DEFAULT_LIMIT = 8;
+
+/**
+ * Build the URL for ``GET /api/tree/children`` with the agreed
+ * query-string order.
+ *
+ * The order is fixed (``parent_id``, ``limit``, ``include_extinct``)
+ * so a snapshot test can pin the exact wire format. The function
+ * is exported because the TaxonomicTree uses it inline when the
+ * ``Extant only`` checkbox toggles, and the test suite asserts the
+ * shape without going through ``fetch``.
+ *
+ * The returned path is RELATIVE (no ``/api`` prefix) because the
+ * ``apiGet`` helper prepends ``/api`` before issuing the request.
+ * The test suite asserts the URL exactly as ``fetch`` sees it --
+ * the ``/api`` prefix is the helper's concern, not the
+ * URL-builder's.
+ */
+export function buildTreeChildrenUrl(args: {
+  parentId: number;
+  limit?: number;
+  includeExtinct?: boolean;
+}): string {
+  const params = new URLSearchParams();
+  params.set("parent_id", String(args.parentId));
+  params.set("limit", String(args.limit ?? TREE_CHILDREN_DEFAULT_LIMIT));
+  if (args.includeExtinct === false) {
+    params.set("include_extinct", "false");
+  }
+  return `/tree/children?${params.toString()}`;
+}
+
+/**
+ * Fetch the direct children of a parent taxon.
+ *
+ * ``parentId = 0`` is the documented sentinel for the root list
+ * (rows with ``parent_id IS NULL``); the backend translates it to
+ * the IS-NULL query. The frontend passes ``0`` from the
+ * ``TaxonomicTree`` boot effect.
+ *
+ * The ``includeExtinct`` flag defaults to ``true`` (extinct rows
+ * are visible). The TaxonomicTree's "Extant only" checkbox sets
+ * it to ``false`` so the next fetch returns the filtered slice.
+ */
+export async function fetchTreeNode(
+  parentId: number,
+  init?: { signal?: AbortSignal; includeExtinct?: boolean; limit?: number },
+): Promise<ApiResult<TreeChildrenResponse>> {
+  const url = buildTreeChildrenUrl({
+    parentId,
+    limit: init?.limit,
+    includeExtinct: init?.includeExtinct,
+  });
+  return apiGet<TreeChildrenResponse>(url, init);
+}
+
+/**
+ * Fetch the search results for a free-text query.
+ *
+ * The backend caps the response at 8 items (the ``taxon-tree-search``
+ * spec hard-caps the dropdown at 8). The frontend never sends a
+ * different limit for the first PR; the optional parameter is
+ * reserved for the eventual "Load more" affordance.
+ */
+export async function fetchTreeSearch(
+  q: string,
+  init?: { signal?: AbortSignal; limit?: number },
+): Promise<ApiResult<TreeSearchResponse>> {
+  const params = new URLSearchParams();
+  params.set("q", q);
+  params.set("limit", String(init?.limit ?? TREE_SEARCH_DEFAULT_LIMIT));
+  return apiGet<TreeSearchResponse>(`/tree/search?${params.toString()}`, init);
+}
+
+/**
+ * A debounced wrapper around the search fetch.
+ *
+ * The "Find taxon" input issues one request per keystroke. The
+ * spec pins a 200ms debounce so the backend sees a single
+ * request for the final value, not a flurry of intermediate
+ * requests. The factory shape mirrors the React custom-hook
+ * contract: the returned function is the debounced trigger, the
+ * returned ``cancel`` clears the pending timer, and the Promise
+ * resolves with the same ``ApiResult`` the fetch would have
+ * returned.
+ *
+ * The wrapper is decoupled from React so the test suite can pin
+ * the behaviour with fake timers (see ``api.treeSearch.test.ts``).
+ * The TaxonomicTree subscribes the input's ``onChange`` to the
+ * returned function and unsubscribes via ``cancel`` on unmount.
+ */
+export function createDebouncedSearch(deps: {
+  fetch: (q: string) => Promise<ApiResult<TreeSearchResponse>>;
+  delay: number;
+}): {
+  (q: string): Promise<ApiResult<TreeSearchResponse>>;
+  cancel: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let pendingResolve:
+    | ((value: ApiResult<TreeSearchResponse>) => void)
+    | null = null;
+  let pendingReject: ((reason: unknown) => void) | null = null;
+
+  function firePending(value: ApiResult<TreeSearchResponse>): void {
+    const resolve = pendingResolve;
+    const reject = pendingReject;
+    pendingResolve = null;
+    pendingReject = null;
+    if (resolve !== null) {
+      resolve(value);
+    } else if (reject !== null) {
+      // ``cancel`` was called but the fetch still resolved; the
+      // caller has already moved on, so swallow the dangling
+      // rejection silently.
+      void reject;
+    }
+  }
+
+  const debounced = (q: string): Promise<ApiResult<TreeSearchResponse>> => {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+    return new Promise<ApiResult<TreeSearchResponse>>((resolve, reject) => {
+      pendingResolve = resolve;
+      pendingReject = reject;
+      timer = setTimeout(() => {
+        timer = null;
+        void deps.fetch(q).then(firePending, (err: unknown) => {
+          // Network failures are mapped to ``error`` by ``apiGet``,
+          // so the fetch rarely rejects. If it does (e.g. an
+          // unexpected programming error), surface the rejection
+          // to the caller.
+          firePending({
+            status: "error",
+            detail: err instanceof Error ? err.message : "unknown error",
+          });
+          void reject;
+        });
+      }, deps.delay);
+    });
+  };
+
+  debounced.cancel = (): void => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    pendingResolve = null;
+    pendingReject = null;
+  };
+
+  return debounced;
 }
 
 // ---------------------------------------------------------------------------

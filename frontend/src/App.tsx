@@ -33,10 +33,17 @@ import type {
 } from "./api";
 import { fetchLinks, fetchTaxonLinks } from "./api";
 import { TAXON_SELECT_EVENT, parseTaxonSelectEvent } from "./events/taxonSelect";
-import { Cascade, PATH_CHANGE_EVENT } from "./components/Cascade";
+import { TaxonomicTree } from "./components/TaxonomicTree";
 import { SpeciesLinks } from "./components/SpeciesLinks";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { useCascadePath } from "./store/cascadePath";
+
+/** CustomEvent name the TaxonomicTree (and the legacy Cascade) emits
+ *  whenever the explored path changes. The App listens for it to
+ *  keep the path in sync with the Zustand store. The
+ *  TaxonomicTree owns the constant; the App re-exports it for
+ *  ergonomic test imports. */
+export const PATH_CHANGE_EVENT = "path:change";
 
 type BreadcrumbLinksState =
   | { status: "idle" }
@@ -180,7 +187,7 @@ export function App(): JSX.Element {
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         <div>
-          <Cascade />
+          <TaxonomicTree />
         </div>
 
         <aside className="space-y-6">
@@ -227,8 +234,3 @@ export function App(): JSX.Element {
     </main>
   );
 }
-
-// PATH_CHANGE_EVENT is re-exported so test files can import it
-// from the App module if they prefer. The Cascade owns the
-// constant; this re-export is for ergonomic convenience only.
-export { PATH_CHANGE_EVENT };
