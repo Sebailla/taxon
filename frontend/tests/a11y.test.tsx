@@ -26,6 +26,7 @@ when a violation surfaces.
 */
 
 import { render } from "@testing-library/react";
+import { act } from "react";
 import { describe, expect, it } from "vitest";
 import { axe } from "vitest-axe";
 
@@ -55,8 +56,16 @@ function summariseViolations(
 
 describe("axe-core a11y", () => {
   it("App has no axe violations on the empty render", async () => {
-    const { container } = render(<App />);
-    const results = await axe(container, RUNNER_OPTIONS);
+    let container: HTMLElement;
+    await act(async () => {
+      // The App triggers a ``loadRoots`` effect on mount; the
+      // mock fetch resolves later and ``TaxonomicTree`` re-renders.
+      // Wrapping the render in ``act`` silences the warning and
+      // keeps the React state machine in lock-step with the test.
+      const result = render(<App />);
+      container = result.container;
+    });
+    const results = await axe(container!, RUNNER_OPTIONS);
     expect(
       results.violations,
       `App a11y violations:\n${summariseViolations(results)}`,
