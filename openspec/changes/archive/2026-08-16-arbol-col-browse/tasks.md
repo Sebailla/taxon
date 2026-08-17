@@ -39,27 +39,33 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Pencil design + impeccable (PR 2, design-only)
 
-- [ ] 2.1 Open `taxon.pen` via Pencil MCP (`get_app_state`); add the "Taxonomic Tree Browse" page: caret row, indent by rank, `rank: Name Authorship • N spp.` row format, `Find taxon` header, `Source` + `Extant only` filter affordances; reuse existing `taxon.pen` design tokens.
-- [ ] 2.2 Run an `impeccable` audit pass on the new page; document the outcome in `openspec/changes/arbol-col-browse/design.md` under "Pencil Audit".
-- [ ] 2.3 Export `taxon.pen` HTML preview via `pencil export_html`; attach as the visual reference for PR 3.
-- [ ] 2.4 Refine the design per `impeccable` findings; commit final Pencil screenshot at `documents-es/openspec/changes/arbol-col-browse/pencil-preview-es.md` with brief neutral Spanish caption per AGENTS.md §1.
+- [x] 2.1 [DEFERRED] Pencil design was not executed because Pencil MCP was disabled in this session; the prescriptive surface brief was captured as `docs/design/taxonomic-tree-browse.md` instead (784 lines, line-by-line translation spec for the implementer). A follow-up issue may redo the Pencil `.pen` page in a future slice.
+- [x] 2.2 [DEFERRED] Same rationale as 2.1; no Pencil page to audit.
+- [x] 2.3 [DEFERRED] Same rationale as 2.1.
+- [x] 2.4 [DEFERRED] Same rationale as 2.1.
 
 ## Phase 3: Frontend TaxonomicTree (PR 3)
 
-- [ ] 3.1 RED — write `frontend/tests/api.treeChildren.test.ts` covering URL builder (`/api/tree/children?parent_id={id}&limit=200`) and 200/404 decode envelope.
-- [ ] 3.2 GREEN — add `fetchTreeNode(parentId, init?)` + `fetchTreeSearch(q, init?)` to `frontend/src/api.ts`.
-- [ ] 3.3 RED — write `frontend/tests/api.treeSearch.test.ts` covering 200ms debounce (rapid keys collapse to one request) + 200/empty decode.
-- [ ] 3.4 GREEN — implement the 200ms debounce wrapper for `fetchTreeSearch`.
-- [ ] 3.5 RED — write `frontend/tests/TaxonomicTree.test.tsx` covering caret toggle (`aria-expanded` reflects state), row format `rank: Name Authorship • N spp.`, indent by depth, keyboard navigation (Enter to expand, ArrowDown/Up move focus), `aria-level` per row, lazy fetch on first expand + cache hit on re-expand.
-- [ ] 3.6 GREEN — create `frontend/src/store/taxonomicTree.ts` (Zustand) with state `{childrenByParentId: Map, expandedIds: Set, rootIds: number[] | null}` + actions `ensureChildren`, `toggleExpand`, `search`, `select`.
-- [ ] 3.7 GREEN — create `frontend/src/components/TaxonomicTree.tsx` rendering caret rows + `Find taxon` header + `Source` + `Extant only` checkboxes; on expand dispatch `path:change` CustomEvent and write explored path to `useCascadePath.getState().setPath(...)`.
-- [ ] 3.8 GREEN — modify `frontend/src/App.tsx`: import `TaxonomicTree` instead of `Cascade`; mount in the same grid slot; keep the breadcrumb-links `useEffect` (lines 119–142) and the `path:change` listener (lines 150–159) verbatim.
-- [ ] 3.9 GREEN — rename `Breadcrumb.tsx` aria-label `Resolved species breadcrumb` → `Cascade path breadcrumb` (Verify-Report §11 ISSUE #3).
-- [ ] 3.10 REFACTOR — delete `frontend/src/components/Cascade.tsx` + `frontend/src/components/Cascade.state.ts` + every `frontend/tests/cascade*.test.tsx` and `frontend/tests/Cascade.*.test.tsx`; re-grep `from.*Cascade` first and surface any cross-importing test.
-- [ ] 3.11 GREEN — add `frontend/tests/App.taxonLinks.test.tsx` verifying the breadcrumb-links panel keeps working end-to-end after the Cascade replacement.
-- [ ] 3.12 RED — write `frontend/tests/TaxonomicTree.a11y.test.tsx` using `vitest-axe` to assert no axe violations on the rendered tree.
-- [ ] 3.13 GREEN — fix every a11y issue flagged by the axe scan.
-- [ ] 3.14 Post-merge — after PR 3 merges to `develop` with green CI, create `/learn-es/YYYY-MM-DD-arbol-col-browse.md` following the required structure per AGENTS.md §2.
+- [x] 3.1 RED — `frontend/tests/api.treeChildren.test.ts` exists (15 tests, merged in PR #69).
+- [x] 3.2 GREEN — `fetchTreeNode`, `fetchTreeSearch` in `frontend/src/api.ts` (merged in PR #69).
+- [x] 3.3 RED — `frontend/tests/api.treeSearch.test.ts` exists (5 tests, merged in PR #69).
+- [x] 3.4 GREEN — `createDebouncedSearch` in `frontend/src/api.ts` (merged in PR #69).
+- [x] 3.5 RED — `frontend/tests/TaxonomicTree.test.tsx` exists (11 tests including the drift-fix scenarios, merged in PR #69).
+- [x] 3.6 GREEN — `frontend/src/store/taxonomicTree.ts` exists with `loadRoots`, `ensureChildren`, `toggleExpand`, `revealNode`, `setIncludeExtinct` (merged in PR #69).
+- [x] 3.7 GREEN — `frontend/src/components/TaxonomicTree.tsx` exists (618 LOC, merged in PR #69).
+- [x] 3.8 GREEN — `frontend/src/App.tsx` mounts `<TaxonomicTree>` in the Cascade slot (merged in PR #69).
+- [x] 3.9 GREEN — `Breadcrumb.tsx` aria-label kept verbatim as `Cascade path breadcrumb` (merged in PR #69).
+- [x] 3.10 REFACTOR — `Cascade.tsx` + `Cascade.state.ts` + 6 cascade test files deleted (merged in PR #69).
+- [x] 3.11 GREEN — `frontend/tests/App.taxonLinks.test.tsx` updated (2 tests, merged in PR #69).
+- [x] 3.12 RED — `frontend/tests/TaxonomicTree.a11y.test.tsx` exists (1 axe-core test, merged in PR #69).
+- [x] 3.13 GREEN — a11y fixes shipped: `aria-activedescendant` on search comb, skeletons `role="treeitem"`, empty + error hoisted out of `role="tree"` host (merged in PR #69).
+- [x] 3.14 Post-merge — `learn-es/2026-08-16-arbol-col-browse-pr3-drift-fixes.md` exists with Spanish mirror (committed in `69d00e2`).
+
+---
+
+## Reconciliation Note
+
+Reconciled by `sdd-archive` at close: Phase 1 + Phase 3 implemented in PR #69 (merged `3fc2eb1`). Phase 2 deferred (Pencil MCP disabled in session; prescriptive design captured as `docs/design/taxonomic-tree-browse.md` instead). Reconciliation authorized by user per the sdd-archive skill's stale-checkbox exception, backed by repository evidence: backend tree endpoints + schemas merged in PR #69, frontend `TaxonomicTree.tsx` (618 LOC) + `taxonomicTree.ts` store + 5 test files merged in PR #69, `Breadcrumb.tsx` aria-label verbatim at line 26, Cascade files absent in `frontend/src/components/` and `frontend/tests/`, learn-es entry committed in `69d00e2`.
 
 ## Threat Matrix → RED Tests Mapping
 
