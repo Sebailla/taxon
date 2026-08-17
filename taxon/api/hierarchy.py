@@ -47,7 +47,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from sqlalchemy import Case, case, func, select
+from sqlalchemy import Case, case, func, select, text
 from sqlalchemy.orm import Session
 
 from taxon.schema import Taxon
@@ -302,6 +302,17 @@ def resolve_path_by_display_level(
     the next segment on its ``id`` so same-named taxa under
     different parents cannot collide.
 
+    When the segment does not exist as a direct child of the
+    previously-matched row, the resolver falls back to a recursive
+    descendant search scoped to the bucket candidate set. This skip-
+    tier walk handles real-world datasets (Catalogue of Life, GBIF
+    Backbone) where the display-bucket classes sit several
+    intermediates below the phylum the cascade UI names — e.g.
+    ``Animalia > Chordata > Vertebrata > Gnathostomata > Osteichthyes >
+    Tetrapoda > Mammalia``. Without the skip-tier walk the cascade
+    dead-ends at the first deep off-tuple tier and the UI cannot
+    reach ``Panthera leo`` from the kingdom dropdown.
+
     Returns the deepest matched row, or ``None`` when any segment
     fails to resolve. The match is unanchored on the first segment
     (the parent of the first tier is unknown — the resolver cannot
@@ -318,16 +329,45 @@ def resolve_path_by_display_level(
         match: Taxon | None = None
         for bucket_index in _candidate_bucket_indices(last_bucket_index):
             bucket = _DISPLAY_LEVELS_IN_ORDER[bucket_index]
+            bucket_set = _bucket_set_for(bucket)
+            # First attempt: direct child of the previously-matched
+            # parent under the candidate bucket (or any off-tuple
+            # rank inside that bucket). This is the fast path that
+            # keeps the existing behaviour for chains without
+            # intermediate gaps.
             stmt = (
                 select(Taxon)
                 .where(func.lower(Taxon.name) == segment.lower())
-                .where(func.lower(_effective_display_level()) == bucket.lower())
+                .where(func.lower(_effective_display_level()).in_([b.lower() for b in bucket_set]))
             )
             if parent_id is not None:
                 stmt = stmt.where(Taxon.parent_id == parent_id)
+            stmt = stmt.order_by(Taxon.id).limit(1)
             candidate = session.scalars(stmt).first()
             if candidate is not None:
                 match = candidate
+                last_bucket_index = bucket_index
+                break
+            # Second attempt: skip-tier walk through descendants of
+            # the previously-matched parent whose display_level sits
+            # inside the candidate bucket set. Real-world datasets
+            # nest the cascade target several intermediates below
+            # the cascade UI's parent pick (Mammalia 3 below
+            # Chordata via Vertebrata + Gnathostomata + Osteichthyes
+            # + Tetrapoda in COL, several more in older snapshots).
+            # Walking descendants keeps the bucket constraint so the
+            # resolver still rejects cross-tier drift.
+            if parent_id is None:
+                continue
+            descendant = _find_descendant_in_bucket(
+                session,
+                parent_id=parent_id,
+                segment=segment,
+                bucket_names=bucket_set,
+                max_depth=10,
+            )
+            if descendant is not None:
+                match = descendant
                 last_bucket_index = bucket_index
                 break
         if match is None:
@@ -336,3 +376,82 @@ def resolve_path_by_display_level(
         parent_id = current.id
 
     return current
+
+
+def _bucket_set_for(bucket: str) -> set[str]:
+    """Return the bucket plus every off-tuple rank that maps to it.
+
+    The cascade UI renders one dropdown per display bucket even
+    when the underlying database carries ranks like ``subphylum``,
+    ``infraphylum``, ``parvphylum`` and ``megaclass`` instead of a
+    direct ``class``. Every walk that targets "the class bucket"
+    must therefore accept any rank whose
+    :data:`taxon.taxonomy.RANK_TO_DISPLAY_LEVEL` entry matches the
+    bucket — not just the strict bucket label.
+
+    The result is intentionally a ``set[str]`` so the resolver can
+    pass it directly into a SQL ``IN`` clause as a flat collection
+    of rank strings.
+    """
+    bucket_set: set[str] = {bucket}
+    for rank, lvl in RANK_TO_DISPLAY_LEVEL.items():
+        if lvl == bucket:
+            bucket_set.add(rank)
+    return bucket_set
+
+
+def _find_descendant_in_bucket(
+    session: Session,
+    *,
+    parent_id: int,
+    segment: str,
+    bucket_names: set[str],
+    max_depth: int = 10,
+) -> Taxon | None:
+    """Return the first descendant of ``parent_id`` matching ``segment`` and bucket.
+
+    Wraps a bounded recursive CTE in SQLite so the cascade walk
+    keeps advancing even when the dataset nests the target tier
+    several intermediates below the cascade UI's parent pick. The
+    depth cap (``max_depth``) mirrors the cascade's nine-tier tuple
+    plus one headroom level; deeper tier searches belong to
+    species-list pagination rather than the cascade walk.
+
+    When two rows share the same name and bucket under the parent
+    the function returns the lowest-id match deterministically so
+    the cascade UI renders a stable dropdown option list. ``None``
+    is returned when no descendant matches.
+    """
+    edl = _effective_display_level()
+    bucket_lower = [b.lower() for b in bucket_names]
+
+    descendants_ids = (
+        session.execute(
+            text(
+                """
+            WITH RECURSIVE descendants(id, depth_ctr) AS (
+                SELECT :root, 0
+                UNION ALL
+                SELECT t.id, d.depth_ctr + 1
+                FROM taxa t
+                JOIN descendants d ON t.parent_id = d.id
+                WHERE d.depth_ctr < :max_depth
+            )
+            SELECT id FROM descendants WHERE id != :root
+            """
+            ).bindparams(root=parent_id, max_depth=max_depth)
+        )
+        .scalars()
+        .all()
+    )
+    if not descendants_ids:
+        return None
+    stmt = (
+        select(Taxon)
+        .where(Taxon.id.in_(descendants_ids))
+        .where(func.lower(Taxon.name) == segment.lower())
+        .where(func.lower(edl).in_(bucket_lower))
+        .order_by(Taxon.id)
+        .limit(1)
+    )
+    return session.scalars(stmt).first()

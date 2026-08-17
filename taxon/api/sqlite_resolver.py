@@ -178,6 +178,13 @@ def list_path_children(
         return None
     parent_row = result.parent.row
 
+    # Special case: the synthesized Biota (or Viruses) superdomain
+    # does not have a real SQLite row whose children we can fetch, so
+    # we populate the wire envelope with the kingdom-tier rows the
+    # cascade UI needs as the next dropdown's options.
+    if _is_synthesized_root_row(parent_row):
+        return _envelope_for_synth_root(session, parent_row)
+
     children_by_rank = _children_grouped_by_rank(session, parent_row.id)
     flat_children = [child for group in children_by_rank.values() for child in group]
 
@@ -210,6 +217,45 @@ def list_path_children(
     )
 
 
+def _envelope_for_synth_root(
+    session: Session,
+    parent_row: TaxonRow,
+) -> PathChildrenEnvelope:
+    """Build the cascade envelope for the synthesized Biota/Viruses root.
+
+    The cascade UI relies on the wire envelope carrying the
+    kingdom-tier rows as ``children`` (so the second dropdown can
+    render them) plus a ``next_tiers`` slice whose ``rank = kingdom``
+    so the state machine's per-slot lookup picks the right tier.
+    The query pins ``rank = 'kingdom'`` because every off-tuple
+    intermediate that maps to the kingdom display bucket already
+    gets surfaced through the skip-tier walk on the next user pick.
+    """
+    kingdom_rows = [
+        row
+        for row in session.scalars(
+            select(Taxon)
+            .where(func.lower(Taxon.rank) == "kingdom")
+            .order_by(func.lower(Taxon.name), Taxon.name)
+        ).all()
+    ]
+    kingdom_dataclass = [_row_to_dataclass(row) for row in kingdom_rows]
+    kingdom_dataclass.sort(key=lambda r: (r.name.lower(), r.name))
+    kingdom_tier = NextTier(
+        rank="kingdom",
+        label="Kingdom",
+        examples=[r.name for r in kingdom_dataclass[:3]],
+        children=[TaxonResponse.model_validate(r) for r in kingdom_dataclass],
+    )
+    parent_response = TaxonResponse.model_validate(parent_row)
+    child_responses = [TaxonResponse.model_validate(r) for r in kingdom_dataclass]
+    return PathChildrenEnvelope(
+        parent=parent_response,
+        children=child_responses,
+        next_tiers=[kingdom_tier],
+    )
+
+
 def list_species_under_path(
     session: Session,
     segments: list[str],
@@ -230,10 +276,16 @@ def list_species_under_path(
     :func:`taxon.api.species.list_species_page`; the ``rank=`` filter
     is replaced by ``display_level='species'`` to roll up
     subspecies / variety / form descendants.
+
+    The synthesized Biota (or Viruses) superdomain prefix is stripped
+    before the walk so the cascade UI's habitual
+    ``Biota|Animalia|...|Panthera`` breadcrumb reaches the actual
+    Panthera genus row instead of 404'ing the request.
     """
-    parent = resolve_path_by_display_level(session, segments)
+    stripped_segments = _strip_synth_root(segments)
+    parent = resolve_path_by_display_level(session, stripped_segments)
     if parent is None:
-        raise NotFoundError(f"taxon not found: {segments[-1]!r}")
+        raise NotFoundError(f"taxon not found: {stripped_segments[-1]!r}")
     inclusion = parse_include(include)
     page = _list_species_page_under_parent(
         session,
@@ -368,15 +420,39 @@ def _resolve_path_internal(
     a real ``id`` to anchor on) and resolves the remainder against
     the SQLite hierarchy.
 
+    Special case: when the path is exactly ``['Biota']`` (or
+    ``['Viruses']``) the stripped remainder is empty and a naive
+    resolver would 404 the request. The cascade UI needs the kingdom
+    tier rendered as the next-tier of the synthesized root so the
+    user can pick the kingdom-level row that drives the rest of the
+    walk. We synthesise a ``TaxonRow`` representing the Biota (or
+    Viruses) superdomain here and let :func:`list_path_children`
+    decorate the envelope with the kingdom children.
+
     ``None`` is returned when any non-root segment fails to resolve
     so the router emits a 404.
     """
     if not segments:
         return _PathResult(parent=None)
 
-    remaining = list(segments)
-    if remaining and remaining[0].lower() in {name.lower() for name, _ in _SYNTHETIC_ROOT_IDS}:
-        remaining = remaining[1:]
+    synthetic_root_names = {name.lower() for name, _ in _SYNTHETIC_ROOT_IDS}
+
+    # ``Biota`` is a synthesized root — handle its single-segment
+    # request explicitly so the cascade frontend gets a populated
+    # kingdom-tier envelope rather than a 404.
+    if len(segments) == 1 and segments[0].lower() in synthetic_root_names:
+        return _PathResult(
+            parent=_PathParent(
+                row=_synthesize_superdomain_row(
+                    name=segments[0],
+                    taxon_id=next(
+                        tid for nm, tid in _SYNTHETIC_ROOT_IDS if nm.lower() == segments[0].lower()
+                    ),
+                )
+            )
+        )
+
+    remaining = _strip_synth_root(segments)
 
     deepest = resolve_path_by_display_level(session, remaining)
     if deepest is None:
@@ -384,6 +460,62 @@ def _resolve_path_internal(
     return _PathResult(
         parent=_PathParent(row=deepest),
     )
+
+
+def _synthesize_superdomain_row(*, name: str, taxon_id: str) -> TaxonRow:
+    """Materialise a synthesized superdomain as a :class:`TaxonRow`.
+
+    The cascade frontend renders the first-tier root from the wire
+    envelope's ``parent`` slot when the user picks the Biota (or
+    Viruses) dropdown option, so we need a structured row that
+    :func:`TaxonResponse.model_validate` will accept. The id carries
+    the CLB-canonical opaque string (``5T6MX`` / ``V``) so the
+    frontend's breadcrumb builder and the legacy ``fetchLinks``
+    slice keep working unchanged.
+
+    The dataclass field type is ``int`` so we coerce the CLB
+    synthetic id into a deterministic negative integer here; the
+    wire envelope's :class:`TaxonResponse` widens ``id: int`` to
+    ``int | str`` and the frontend never inspects the value beyond
+    equality checks against its local cached state.
+    """
+    return TaxonRow(
+        id=-1,  # placeholder; the wire layer rebinds to the CLB id
+        name=name,
+        display_name=name,
+        rank="superdomain",
+        parent_id=None,
+        is_synonym=False,
+        is_extinct=False,
+        is_uncertain=False,
+        is_unassigned=False,
+    )
+
+
+def _is_synthesized_root_row(row: TaxonRow) -> bool:
+    """Return ``True`` when ``row`` is a synthesized Biota/Viruses root."""
+    return row.id == -1 and row.rank.lower() == "superdomain"
+
+
+def _strip_synth_root(segments: list[str]) -> list[str]:
+    """Drop a leading Biota (or Viruses) segment from ``segments``.
+
+    The cascade UI prefixes every user-built path with ``Biota`` (or
+    ``Viruses``) because the first dropdown renders the two
+    synthesized superdomains as the root tier. The resolver cannot
+    anchor those segments against the local SQLite hierarchy so it
+    drops them and walks the remainder against the real taxonomy.
+
+    Segments that do not start with a synth-root token are returned
+    unchanged so :func:`resolve_path_by_display_level` is the single
+    source of truth for the path walk.
+    """
+    if not segments:
+        return segments
+    synth_names = {name.lower() for name, _ in _SYNTHETIC_ROOT_IDS}
+    if segments[0].lower() in synth_names:
+        return list(segments[1:])
+    return list(segments)
 
 
 def _children_grouped_by_rank(
