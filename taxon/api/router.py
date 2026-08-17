@@ -52,7 +52,7 @@ from __future__ import annotations
 from pathlib import Path as PathLib
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -66,10 +66,15 @@ from taxon.api.hierarchy import (
     resolve_path_by_display_level,
 )
 from taxon.api.schemas import (
+    ExploredListResponse,
+    ExploredResponse,
     LinksResponse,
+    LinkVisitedItem,
+    LinkVisitedResponse,
     MarkerFlags,
     PathChildrenEnvelope,
     SearchLinkItem,
+    SpeciesFolderResponse,
     SpeciesListItem,
     SpeciesListResponse,
     SpeciesLookupResponse,
@@ -112,6 +117,7 @@ router = APIRouter(prefix="/api")
 # disk round-trip. Production callers can override ``TAXON_TEMPLATES``
 # via the env var to point at a different file.
 import os as _os
+from datetime import UTC
 
 _TEMPLATES_PATH = PathLib(_os.environ.get("TAXON_TEMPLATES", "docs/sources/templates.md"))
 
@@ -829,6 +835,219 @@ def get_tree_search(
             for hit in hits
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# species-folder-explorer (PR 1 of issue #68)
+# ---------------------------------------------------------------------------
+# These eight endpoints MUST be registered BEFORE the ``/{path:path}/taxon-links``
+# catch-all below so the catch-all does not shadow them. The regression
+# discipline is pinned by ``test_api_router_tree::test_tree_endpoints_registered_before_taxon_links_catchall``
+# for the tree endpoints; we extend the same discipline to the workspace
+# endpoints in ``test_api_router_workspace::test_workspace_endpoints_registered_before_taxon_links_catchall``.
+#
+# Every read and write walks by ``(genus, epithet)`` (and ``source_label`` for
+# ``link_visited``); no endpoint reaches into ``taxa.id`` because the
+# workspace tables are orthogonal to the ``taxa`` primary key.
+
+
+@router.post(
+    "/explored/{genus}/{epithet}",
+    response_model=ExploredResponse,
+)
+def set_explored_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    session: Annotated[Session, Depends(get_db)],
+) -> ExploredResponse:
+    """Upsert the explored flag for ``(genus, epithet)`` and echo the species row.
+
+    The endpoint returns the species row (same shape as
+    :class:`SpeciesLookupResponse`) so the SPA can pin the toggle to
+    the row it was clicked from without a second lookup. Re-posting
+    the same pair refreshes ``explored_at`` and is idempotent (no 409).
+    """
+    from taxon.api.router import _species_response  # local import to avoid cycles
+    from taxon.api.workspace import set_explored
+
+    species = set_explored(session, genus=genus, epithet=epithet)
+    response = _species_response(session, species)
+    return ExploredResponse(
+        id=response.id,
+        canonical_name=response.canonical_name,
+        display_name=response.display_name,
+        markers=response.markers,
+        breadcrumb=response.breadcrumb,
+        genus=genus,
+        epithet=epithet,
+        explored_at=_utcnow_iso(),
+    )
+
+
+@router.delete("/explored/{genus}/{epithet}", status_code=204)
+def unset_explored_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    session: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Remove the explored flag if present; idempotent — no 404."""
+    from taxon.api.workspace import unset_explored
+
+    unset_explored(session, genus=genus, epithet=epithet)
+    return Response(status_code=204)
+
+
+@router.get("/explored/list", response_model=ExploredListResponse)
+def list_explored_endpoint(
+    session: Annotated[Session, Depends(get_db)],
+) -> ExploredListResponse:
+    """Return every explored row ordered by ``(genus, epithet)``."""
+    from taxon.api.workspace import list_explored
+
+    rows = list_explored(session)
+    return ExploredListResponse(
+        species=[
+            ExploredResponse(
+                id=-1,  # the workspace store keys on (genus, epithet); id is not used
+                canonical_name=f"{row.genus} {row.epithet}",
+                display_name=f"{row.genus} {row.epithet}",
+                markers=MarkerFlags(),
+                breadcrumb=[],
+                genus=row.genus,
+                epithet=row.epithet,
+                explored_at=row.explored_at,
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.post(
+    "/species-folder/{genus}/{epithet}",
+    response_model=SpeciesFolderResponse,
+    status_code=201,
+)
+def create_species_folder_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    session: Annotated[Session, Depends(get_db)],
+) -> SpeciesFolderResponse:
+    """Create the breadcrumb-mirror folder under ``AQUALIFE_ROOT`` and persist the row.
+
+    201 on first create; 409 on repeat create; 404 when the species
+    cannot be resolved; 500 when the resolved ``AQUALIFE_ROOT`` is
+    unwritable. The folder is created with ``parents=True`` so missing
+    intermediate directories are auto-built.
+    """
+    from taxon.api.workspace import create_species_folder
+
+    row = create_species_folder(session, genus=genus, epithet=epithet)
+    return SpeciesFolderResponse(
+        genus=row.genus,
+        epithet=row.epithet,
+        path=row.path,
+        exists=True,
+    )
+
+
+@router.get(
+    "/species-folder/{genus}/{epithet}",
+    response_model=SpeciesFolderResponse,
+)
+def get_species_folder_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    session: Annotated[Session, Depends(get_db)],
+) -> SpeciesFolderResponse:
+    """Return the folder row when present; 404 otherwise.
+
+    ``exists`` mirrors the row's presence so the SPA can render the
+    badge vs. the create button from a single 200 response when the
+    folder exists.
+    """
+    from taxon.api.workspace import get_species_folder
+
+    row = get_species_folder(session, genus=genus, epithet=epithet)
+    if row is None:
+        raise NotFoundError(f"species folder not found: {genus} {epithet!r}")
+    return SpeciesFolderResponse(
+        genus=row.genus,
+        epithet=row.epithet,
+        path=row.path,
+        exists=True,
+    )
+
+
+@router.post(
+    "/link-visited/{genus}/{epithet}/{source}",
+    status_code=204,
+)
+def record_link_visited_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    source: Annotated[str, Path(min_length=1, alias="source")],
+    session: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Upsert the visited marker for ``(genus, epithet, source)``.
+
+    ``source`` is the canonical name from ``docs/sources/templates.md``
+    (e.g. ``"Wikipedia"``); URLs are NOT part of the key. The endpoint
+    is idempotent — re-posting refreshes ``visited_at``.
+    """
+    from taxon.api.workspace import record_link_visited
+
+    record_link_visited(session, genus=genus, epithet=epithet, source=source)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/link-visited/{genus}/{epithet}/{source}",
+    status_code=204,
+)
+def unrecord_link_visited_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    source: Annotated[str, Path(min_length=1, alias="source")],
+    session: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Remove the visited marker; idempotent — no 404."""
+    from taxon.api.workspace import unrecord_link_visited
+
+    unrecord_link_visited(session, genus=genus, epithet=epithet, source=source)
+    return Response(status_code=204)
+
+
+@router.get(
+    "/link-visited/{genus}/{epithet}",
+    response_model=LinkVisitedResponse,
+)
+def list_link_visited_endpoint(
+    genus: Annotated[str, Path(min_length=1, alias="genus")],
+    epithet: Annotated[str, Path(min_length=1, alias="epithet")],
+    session: Annotated[Session, Depends(get_db)],
+) -> LinkVisitedResponse:
+    """Return every visited row for ``(genus, epithet)`` ordered by ``source``."""
+    from taxon.api.workspace import list_link_visited
+
+    rows = list_link_visited(session, genus=genus, epithet=epithet)
+    return LinkVisitedResponse(
+        genus=genus,
+        epithet=epithet,
+        sources=[
+            LinkVisitedItem(source=row.source_label, visited_at=row.visited_at) for row in rows
+        ],
+    )
+
+
+def _utcnow_iso() -> str:
+    """ISO-8601 UTC timestamp used by the explored list endpoint.
+
+    The store's ``explored_at`` column carries the same format so the
+    hydrate-on-mount payload stays self-consistent.
+    """
+    from datetime import datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 @router.get(
