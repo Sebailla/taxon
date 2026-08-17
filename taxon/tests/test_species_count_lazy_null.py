@@ -128,9 +128,7 @@ def test_species_count_is_null_above_threshold(client: TestClient) -> None:
     with state.SessionLocal() as session:
         # Bigroot has 5 direct children. With threshold=3 the gate
         # fires and returns None without walking the CTE.
-        count = tree_mod._count_descendant_species(
-            session, bigroot_id, threshold=3
-        )
+        count = tree_mod._count_descendant_species(session, bigroot_id, threshold=3)
         assert count is None
 
 
@@ -145,9 +143,7 @@ def test_lazy_null_helper_returns_integer_for_threshold_above_fanout(
     bigroot_id = _id_for_name(client, "Bigroot")
     state = client.app.state.app_state  # type: ignore[attr-defined]
     with state.SessionLocal() as session:
-        count = tree_mod._count_descendant_species(
-            session, bigroot_id, threshold=10
-        )
+        count = tree_mod._count_descendant_species(session, bigroot_id, threshold=10)
 
     assert isinstance(count, int)
     assert count == 5
@@ -160,8 +156,6 @@ def test_lazy_null_helper_returns_none_for_threshold_below_fanout(
     bigroot_id = _id_for_name(client, "Bigroot")
     state = client.app.state.app_state  # type: ignore[attr-defined]
     with state.SessionLocal() as session:
-        count = tree_mod._count_descendant_species(
-            session, bigroot_id, threshold=3
-        )
+        count = tree_mod._count_descendant_species(session, bigroot_id, threshold=3)
 
     assert count is None

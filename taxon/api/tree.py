@@ -117,7 +117,7 @@ def split_authorship(name: str, display_name: str) -> str:
     name_clean = name.strip()
     display_clean = display_name.strip()
     if name_clean and display_clean.lower().startswith(name_clean.lower()):
-        tail = display_clean[len(name_clean):].lstrip()
+        tail = display_clean[len(name_clean) :].lstrip()
         # Strip the WoRMS-importer ``[rank]`` tag if present so the
         # authorship surface never carries parser noise.
         if tail.endswith("]") and "[" in tail:
@@ -152,11 +152,7 @@ def _count_descendant_species(
     short-circuits on the direct-children count BEFORE running the
     CTE so the threshold check itself costs O(1) on the index.
     """
-    direct_count_stmt = (
-        select(func.count())
-        .select_from(Taxon)
-        .where(Taxon.parent_id == parent_id)
-    )
+    direct_count_stmt = select(func.count()).select_from(Taxon).where(Taxon.parent_id == parent_id)
     direct_count = int(session.execute(direct_count_stmt).scalar_one())
     if direct_count > threshold:
         return None
@@ -300,9 +296,7 @@ def list_tree_children(
     has_children_by_id: dict[int, bool] = {}
     if children_orm:
         child_ids = [child.id for child in children_orm]
-        batch_stmt = select(Taxon.parent_id, Taxon.id).where(
-            Taxon.parent_id.in_(child_ids)
-        )
+        batch_stmt = select(Taxon.parent_id, Taxon.id).where(Taxon.parent_id.in_(child_ids))
         parents_seen: set[int] = set()
         for row in session.execute(batch_stmt).all():
             parents_seen.add(row.parent_id)
@@ -397,8 +391,7 @@ def search_taxon(
     stmt = (
         select(Taxon)
         .where(
-            (func.lower(Taxon.name).like(pattern))
-            | (func.lower(Taxon.display_name).like(pattern))
+            (func.lower(Taxon.name).like(pattern)) | (func.lower(Taxon.display_name).like(pattern))
         )
         .order_by(func.length(Taxon.display_name), func.lower(Taxon.name))
         .limit(limit * 4)  # over-fetch so we can re-rank client-side
@@ -417,9 +410,7 @@ def search_taxon(
         bucketed[bucket].append(_row_to_search_row(child, relevance))
 
     # Concatenate by bucket priority.
-    ranked: list[TreeSearchRow] = (
-        bucketed[0] + bucketed[1] + bucketed[2]
-    )[:limit]
+    ranked: list[TreeSearchRow] = (bucketed[0] + bucketed[1] + bucketed[2])[:limit]
 
     # Populate ``has_children`` for the rendered hits in ONE round
     # trip. The naive implementation ran one EXISTS per hit which
@@ -427,16 +418,12 @@ def search_taxon(
     # ``limit`` but still wasteful on a hot path).
     if ranked:
         hit_ids = [row.id for row in ranked]
-        batch_stmt = select(Taxon.parent_id, Taxon.id).where(
-            Taxon.parent_id.in_(hit_ids)
-        )
+        batch_stmt = select(Taxon.parent_id, Taxon.id).where(Taxon.parent_id.in_(hit_ids))
         parents_seen: set[int] = set()
         for row in session.execute(batch_stmt).all():
             parents_seen.add(row.parent_id)
         for hit in ranked:
-            object.__setattr__(
-                hit, "has_children", hit.id in parents_seen
-            )
+            object.__setattr__(hit, "has_children", hit.id in parents_seen)
     return ranked
 
 

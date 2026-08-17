@@ -329,9 +329,7 @@ def test_tree_children_hides_extinct_when_filter_off(
     assert archaea_id > 0
 
     with _client(app_with_extinct) as client:
-        response = client.get(
-            f"/api/tree/children?parent_id={archaea_id}&include_extinct=false"
-        )
+        response = client.get(f"/api/tree/children?parent_id={archaea_id}&include_extinct=false")
 
     assert response.status_code == 200, response.text
     children = response.json()["children"]
