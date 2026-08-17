@@ -140,9 +140,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if database_url == "sqlite:///:memory:":
         # Bootstrap the schema for tests so the app is usable without an
         # import step. Production callers build the DB out of band.
+        # Import the workspace models first so ``species_explored``,
+        # ``species_folders``, and ``link_visited`` are part of
+        # ``Base.metadata`` at create_all time.
+        from taxon.api.workspace import WORKSPACE_TABLES
         from taxon.schema import Base
 
         Base.metadata.create_all(engine)
+    else:
+        # File-backed SQLite: bootstrap ONLY the workspace tables
+        # (species_explored, species_folders, link_visited) so a fresh
+        # ``data/taxon.db`` boots the species-folder-explorer endpoint
+        # surface without an out-of-band ``python -m taxon.migrate``
+        # step. ``Base.metadata.create_all`` is idempotent — pre-existing
+        # tables (``taxa``, ``species_paths``) are left alone.
+        from taxon.api.workspace import WORKSPACE_TABLES
+        from taxon.schema import Base
+
+        workspace_table_objs = [Base.metadata.tables[name] for name in WORKSPACE_TABLES]
+        Base.metadata.create_all(engine, tables=workspace_table_objs)
 
     try:
         yield
@@ -184,6 +200,15 @@ def create_app(database_url: str | None = None) -> FastAPI:
     @app.exception_handler(AmbiguousError)
     def _handle_ambiguous(_request: Request, exc: AmbiguousError) -> JSONResponse:
         return _error_response(409, exc.detail, exc.candidates)
+
+    @app.exception_handler(APIError)
+    def _handle_api_error(_request: Request, exc: APIError) -> JSONResponse:
+        # Generic catch-all for :class:`APIError` raised by helper code
+        # (e.g. ``taxon.api.workspace``) that did not pick a typed
+        # subclass. The ``status_code`` attribute carries the intended
+        # HTTP status; the helper may have used 404 for an unknown
+        # species or 409 for a duplicate folder, etc.
+        return _error_response(exc.status_code, exc.detail, None)
 
     @app.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:

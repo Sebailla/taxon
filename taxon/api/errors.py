@@ -18,10 +18,12 @@ class APIError(Exception):
     status_code: int = 500
     detail: str = "internal server error"
 
-    def __init__(self, detail: str | None = None) -> None:
+    def __init__(self, detail: str | None = None, status_code: int | None = None) -> None:
         super().__init__(detail or self.detail)
         if detail is not None:
             self.detail = detail
+        if status_code is not None:
+            self.status_code = status_code
 
 
 class NotFoundError(APIError):

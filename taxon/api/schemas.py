@@ -381,16 +381,95 @@ class TreeSearchResponse(_ORMBase):
     items: list[TreeSearchHit]
 
 
+# ---------------------------------------------------------------------------
+# species-folder-explorer (PR 1 of issue #68)
+# ---------------------------------------------------------------------------
+
+
+class ExploredResponse(_ORMBase):
+    """Response for ``POST /api/explored/{genus}/{epithet}``.
+
+    Echoes the resolved species row in the same shape as
+    :class:`SpeciesLookupResponse` so the SPA can pin the explored flag
+    to the row it was toggled from without a second lookup.
+    """
+
+    id: int
+    canonical_name: Annotated[str, Field(min_length=1)]
+    display_name: str
+    markers: MarkerFlags
+    breadcrumb: list[str]
+    genus: Annotated[str, Field(min_length=1)]
+    epithet: Annotated[str, Field(min_length=1)]
+    explored_at: str
+
+
+class ExploredListResponse(_ORMBase):
+    """Envelope for ``GET /api/explored/list``.
+
+    The frontend ``workspaceStore.hydrate`` action consumes this on
+    App mount; ``species`` is empty (not 404) when the database has no
+    explored rows.
+    """
+
+    species: list[ExploredResponse]
+
+
+class SpeciesFolderResponse(_ORMBase):
+    """Response for ``POST``/``GET /api/species-folder/{genus}/{epithet}``.
+
+    ``path`` is the absolute on-disk path of the breadcrumb-mirror
+    folder under ``AQUALIFE_ROOT``. ``exists`` mirrors the row's
+    presence so the GET existence check does not need a separate
+    status-code round-trip in the SPA.
+    """
+
+    genus: Annotated[str, Field(min_length=1)]
+    epithet: Annotated[str, Field(min_length=1)]
+    path: str
+    exists: bool = True
+
+
+class LinkVisitedItem(_ORMBase):
+    """One entry in the per-species visited-set list.
+
+    ``source`` is the canonical name from ``docs/sources/templates.md``
+    (e.g. ``"Wikipedia"``); ``visited_at`` is the ISO-8601 timestamp
+    the row was last refreshed.
+    """
+
+    source: str
+    visited_at: str
+
+
+class LinkVisitedResponse(_ORMBase):
+    """Envelope for ``GET /api/link-visited/{genus}/{epithet}``.
+
+    ``sources`` is empty (not 404) when the species has no visited
+    rows. The frontend hydrates per species, lazily, when its row
+    mounts.
+    """
+
+    genus: Annotated[str, Field(min_length=1)]
+    epithet: Annotated[str, Field(min_length=1)]
+    sources: list[LinkVisitedItem]
+
+
 __all__ = [
     "AmbiguityCandidate",
     "CandidateRef",
     "ErrorResponse",
+    "ExploredListResponse",
+    "ExploredResponse",
     "HealthResponse",
+    "LinkVisitedItem",
+    "LinkVisitedResponse",
     "LinksResponse",
     "MarkerFlags",
     "NextTier",
     "PathChildrenEnvelope",
     "SearchLinkItem",
+    "SpeciesFolderResponse",
     "SpeciesListItem",
     "SpeciesListResponse",
     "SpeciesLookupResponse",
