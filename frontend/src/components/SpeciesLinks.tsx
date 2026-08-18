@@ -15,12 +15,16 @@ renderer with no fetching logic.
 */
 
 import type { SearchLinkItem } from "../api";
+import { speciesKey } from "../api";
+import { useWorkspace } from "../store/workspace";
 
 interface SpeciesLinksProps {
   links: SearchLinkItem[];
+  genus?: string;
+  epithet?: string;
 }
 
-export function SpeciesLinks({ links }: SpeciesLinksProps): JSX.Element {
+export function SpeciesLinks({ links, genus, epithet }: SpeciesLinksProps): JSX.Element {
   if (links.length === 0) {
     return (
       <div className="rounded-card border border-border bg-surface p-4">
@@ -37,30 +41,34 @@ export function SpeciesLinks({ links }: SpeciesLinksProps): JSX.Element {
         role="list"
       >
         {links.map((link) => (
-          <SourceLink key={link.source + link.url} link={link} />
+          <SourceLink key={link.source + link.url} link={link} genus={genus} epithet={epithet} />
         ))}
       </div>
     </section>
   );
 }
 
-function SourceLink({ link }: { link: SearchLinkItem }): JSX.Element {
+function SourceLink({ link, genus, epithet }: { link: SearchLinkItem; genus?: string; epithet?: string }): JSX.Element {
   const isScihub = link.source === "Sci-hub";
+  const key = genus && epithet ? speciesKey(genus, epithet) : null;
+  const visited = useWorkspace((state) => key !== null && (state.visitedLinks.get(key)?.has(link.source) ?? false));
+  const toggleVisited = useWorkspace((state) => state.toggleVisited);
   return (
-    <a
-      role="listitem"
-      href={link.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label={`${link.label} (opens in a new tab)`}
-      className={
-        "inline-flex items-center justify-between gap-2 rounded-btn border bg-surface px-3 py-2 text-sm text-navy hover:bg-bg " +
-        (isScihub ? "border-red" : "border-border")
-      }
-    >
-      <span>{link.label}</span>
-      <ExternalLinkIcon />
-    </a>
+    <div role="listitem" className={`flex items-center gap-2 rounded-btn border bg-surface px-3 py-2 text-sm ${visited ? "border-muted text-slate line-through" : isScihub ? "border-red text-navy" : "border-border text-navy"}`}>
+      {genus && epithet ? (
+        <input type="checkbox" role="switch" checked={visited} aria-checked={visited} aria-label={`Mark ${link.source} as visited`} onChange={() => void toggleVisited(genus, epithet, link.source)} />
+      ) : null}
+      <a
+        href={link.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`${link.label} (opens in a new tab)`}
+        className="inline-flex min-w-0 flex-1 items-center justify-between gap-2 hover:underline"
+      >
+        <span>{link.label}</span>
+        <ExternalLinkIcon />
+      </a>
+    </div>
   );
 }
 
