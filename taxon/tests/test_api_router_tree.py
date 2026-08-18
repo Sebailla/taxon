@@ -447,3 +447,41 @@ def test_tree_endpoints_registered_before_taxon_links_catchall(
 
     assert children_response.status_code == 200, children_response.text
     assert search_response.status_code == 200, search_response.text
+
+
+# ---------------------------------------------------------------------------
+# Breadcrumb-links path resolver — the CoL tree dispatches short paths
+# verbatim, so the catch-all ``/{path:path}/taxon-links`` MUST accept any
+# rank on the first segment.
+# ---------------------------------------------------------------------------
+
+
+def test_taxon_links_accepts_single_domain_segment(
+    app_five_roots: FastAPI,
+) -> None:
+    """``/{path:path}/taxon-links`` MUST accept a one-segment path whose
+    only segment is a domain-tier row (the CoL tree root shape).
+
+    Without the relaxation in
+    :func:`taxon.api.hierarchy._candidate_bucket_indices`, the
+    resolver anchored the first segment to the ``kingdom`` bucket
+    and every ``path:change`` dispatched by the CoL tree (e.g.
+    ``["Eukaryota"]``, ``["Archaea"]``) returned 404. The breadcrumb
+    panel then rendered ``Could not load links: taxon not found:
+    'Eukaryota'`` even though the row existed.
+    """
+    with _client(app_five_roots) as client:
+        # Eukaryota is a domain row (display bucket ``realm``) under
+        # the CoL fixture. The breadcrumb's path:change dispatches
+        # ``["Eukaryota"]`` verbatim, so the catch-all must accept it.
+        response = client.get(
+            "/api/Eukaryota/taxon-links",
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["taxon"]["name"] == "Eukaryota"
+    # The breadcrumb's links envelope must carry the 13 search-source
+    # substitutions keyed on the canonical ``name``.
+    assert len(body["links"]) > 0
+    assert all("source" in link and "url" in link for link in body["links"])
