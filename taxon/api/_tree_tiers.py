@@ -23,7 +23,10 @@ roll-up behaviour with the cascade resolver.
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+import base64
+from typing import Final
+
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session
 
 from taxon.api.hierarchy import (
@@ -33,8 +36,30 @@ from taxon.api.hierarchy import (
 from taxon.api.schemas import (
     NextTier,
     TaxonResponse,
+    TreeNodeTier,
 )
 from taxon.schema import Taxon
+
+# Tier-ranks in cascade order. Each rank bucket below a parent is the
+# tier group the wire envelope exposes; the helper iterates this list
+# in order so the cascade UI renders tiers in the canonical
+# top-down order. The list intentionally excludes ``realm`` and
+# ``kingdom`` because the tree endpoint never emits those ranks
+# (the path-resolver handles them via ``Biota``/``Viruses``).
+_TIER_RANKS_IN_CASCADE_ORDER: Final[tuple[str, ...]] = (
+    "phylum",
+    "class",
+    "order",
+    "family",
+    "genus",
+    "species",
+)
+
+# Hard cap on the per-tier recursive CTE depth. The 57s cliff in
+# issue #76 came from unbounded CASE evaluation; ``max_depth=8`` is
+# the documented bound that keeps the per-tier query under the
+# 50ms p95 target against ``data/col.db``.
+_TIER_WALK_MAX_DEPTH: Final[int] = 8
 
 
 def _capitalize(s: str) -> str:
@@ -240,13 +265,281 @@ def _build_tier(rank: str, children: list[TaxonRow]) -> NextTier:
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-tier recursive CTE walk (PR A.1 of #76)
+# ---------------------------------------------------------------------------
+
+
+def _encode_cursor(name: str, id: int) -> str:
+    """Encode the per-tier pagination cursor as opaque base64.
+
+    The cursor encodes both the canonical ``name`` and the row ``id``
+    so re-imports that renumber ids can be tolerated by skipping
+    rows whose ``id`` no longer matches the cursor's id (see the
+    ``Cursor stability across re-imports`` requirement in
+    ``index-and-performance.md``). The separator is the NUL byte so
+    canonical names containing ``:`` or other safe characters round-
+    trip without ambiguity.
+
+    The encoded value is opaque to the client; it MUST NOT be parsed
+    or interpreted by anything but :func:`_decode_cursor`.
+    """
+    raw = f"{name}\x00{id}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_cursor(cursor: str) -> tuple[str, int]:
+    """Decode the opaque per-tier cursor into ``(name, id)``.
+
+    Inverse of :func:`_encode_cursor`. Raises :class:`ValueError`
+    when the cursor cannot be parsed — the router translates that
+    into a 400 so a malformed cursor never crashes the resolver.
+    The split is on the first NUL byte so canonical names carrying
+    any other character round-trip without ambiguity.
+    """
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii"))
+        decoded = raw.decode("utf-8")
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"invalid cursor: {cursor!r}") from exc
+    separator_idx = decoded.find("\x00")
+    if separator_idx < 0:
+        raise ValueError(f"invalid cursor: {cursor!r}")
+    name = decoded[:separator_idx]
+    id_str = decoded[separator_idx + 1 :]
+    try:
+        row_id = int(id_str)
+    except ValueError as exc:
+        raise ValueError(f"invalid cursor: {cursor!r}") from exc
+    return name, row_id
+
+
+def _per_tier_walk(
+    session: Session,
+    parent_id: int,
+    tier_ranks: tuple[str, ...],
+    *,
+    max_depth: int = _TIER_WALK_MAX_DEPTH,
+    tier_limit: int = 50,
+    cursor: tuple[str, int] | None = None,
+    include_extinct: bool = True,
+) -> list[TaxonRow]:
+    """Walk the per-tier subtree under ``parent_id`` with a recursive CTE.
+
+    The query pins ``rank IN :tier_ranks`` so the working set is
+    bounded per cascade bucket — the 57s cliff in issue #76 came
+    from evaluating CASE branches across every descendant rank. The
+    CTE depth caps at ``max_depth`` (default 8) so pathological
+    hierarchies terminate in a bounded number of hops.
+
+    Ordering matches the per-tier ``ORDER BY LOWER(name), name`` so
+    pagination round-trips deterministically. The optional
+    ``cursor`` advances the window past rows whose ``(name, id)``
+    tuple is strictly greater than the cursor's tuple (the same
+    tie-break rule the species-list endpoint uses).
+
+    The ``include_extinct`` flag mirrors the direct-children
+    contract: ``True`` (default) preserves current behaviour; when
+    ``False`` the SQL adds an ``is_extinct = false`` predicate so the
+    filter applies to tier rows as well as direct children (see the
+    ``include_extinct filter`` requirement in
+    ``index-and-performance.md``).
+    """
+    if not tier_ranks:
+        return []
+
+    # The ``tier_ranks`` parameter is a tuple — ``expanding`` flattens
+    # the bind to a SQL ``(rank1, rank2, ...)`` clause. SQLite accepts
+    # an empty IN list as 0 rows so we short-circuit on empty.
+    extinct_clause = (
+        "" if include_extinct else " AND t.is_extinct = 0 "
+    )
+
+    if cursor is not None:
+        after_name, after_id = cursor
+        # Advance past rows whose (name, id) tuple is strictly
+        # greater than the cursor's tuple, with ``id`` as the
+        # tie-break (same shape the species-list endpoint uses).
+        cursor_clause = (
+            " AND (lower(t.name) > :after_name "
+            "      OR (lower(t.name) = :after_name AND t.id > :after_id)) "
+        )
+    else:
+        cursor_clause = ""
+
+    sql_text = (
+        """
+        WITH RECURSIVE tier_descendants(id, depth) AS (
+            SELECT child.id, 0
+              FROM taxa AS child
+              WHERE child.parent_id = :parent_id
+                AND lower(child.rank) IN :tier_ranks
+            UNION ALL
+            SELECT next_child.id, td.depth + 1
+              FROM taxa AS next_child
+              JOIN tier_descendants AS td ON next_child.parent_id = td.id
+              WHERE td.depth < :max_depth
+                AND lower(next_child.rank) IN :tier_ranks
+        )
+        SELECT t.id, t.name, t.display_name, t.rank, t.parent_id,
+               t.is_synonym, t.is_extinct, t.is_uncertain, t.is_unassigned
+          FROM taxa AS t
+          JOIN tier_descendants AS d ON t.id = d.id
+        """
+        + extinct_clause
+        + cursor_clause
+        + " ORDER BY lower(t.name), t.name LIMIT :tier_limit"
+    )
+
+    stmt = text(sql_text).bindparams(bindparam("tier_ranks", expanding=True))
+
+    params: dict[str, object] = {
+        "parent_id": parent_id,
+        "tier_ranks": tuple(tier_ranks),
+        "max_depth": max_depth,
+        "tier_limit": tier_limit,
+    }
+    if cursor is not None:
+        params["after_name"] = after_name.lower()
+        params["after_id"] = after_id
+
+    rows = session.execute(stmt, params).all()
+    out: list[TaxonRow] = []
+    for row in rows:
+        out.append(
+            TaxonRow(
+                id=int(row.id),
+                name=str(row.name),
+                display_name=str(row.display_name),
+                rank=str(row.rank),
+                parent_id=row.parent_id,
+                is_synonym=bool(row.is_synonym),
+                is_extinct=bool(row.is_extinct),
+                is_uncertain=bool(row.is_uncertain),
+                is_unassigned=bool(row.is_unassigned),
+            )
+        )
+    return out
+
+
+def _build_next_tiers(
+    session: Session,
+    parent_id: int,
+    direct_children: list[TaxonRow],
+    *,
+    tier_limit: int = 50,
+    cursor: tuple[str, int] | None = None,
+    include_extinct: bool = True,
+    max_depth: int = _TIER_WALK_MAX_DEPTH,
+) -> list[TreeNodeTier] | None:
+    """Build the per-tier envelope for ``GET /api/tree/children``.
+
+    Returns one :class:`TreeNodeTier` per cascade bucket below the
+    parent, in cascade-rank order. Empty tiers are omitted (the spec
+    pins "ranks with zero rows SHALL be omitted from the DOM"). A
+    parent with no descendants at any rank returns ``None`` so the
+    envelope stays additive — old clients see ``next_tiers: null``.
+
+    The cursor parameter is honoured per-tier: a client advancing
+    one tier with ``?tier={rank}&cursor={c}`` sees that tier
+    advance while every other tier's payload stays cached. When
+    ``cursor`` is ``None`` (the default envelope call) every tier
+    returns its first page with a fresh cursor.
+
+    The :func:`_phylum_rollup` / :func:`_family_rollup` rules apply
+    so off-tuple intermediates (subphylum / infraphylum / etc.) fold
+    into the parent bucket the same way they do for the cascade
+    endpoint — the wire shape stays symmetric with
+    ``GET /api/path-children``.
+    """
+    children_by_rank = _children_grouped_by_rank(session, parent_id)
+    # ``direct_children`` is unused here but kept on the signature so
+    # the router can pass the already-materialised list without an
+    # extra round trip when the response shape widens in follow-up
+    # work units (the per-tier CTE shares the same session).
+    _ = direct_children
+
+    if not children_by_rank:
+        return None
+
+    parent_row: TaxonRow | None = None
+    parent = session.get(Taxon, parent_id)
+    if parent is not None:
+        parent_row = _row_to_dataclass(parent)
+
+    # Apply the roll-up rules when the parent is a phylum or family.
+    # For other ranks the per-tier walk enumerates the direct
+    # children of each cascade bucket directly; the roll-up is a
+    # no-op because there are no off-tuple intermediates in those
+    # buckets under realistic data shapes.
+    grouping = children_by_rank
+    if parent_row is not None and parent_row.rank.lower() == "phylum":
+        grouping, _ = _phylum_rollup(session, children_by_rank)
+    elif parent_row is not None and parent_row.rank.lower() == "family":
+        grouping, _ = _family_rollup(session, children_by_rank)
+
+    # When the parent is itself a tier rank (e.g. a kingdom), each
+    # bucket below the parent gets its own tier. When the parent is
+    # at a tier rank (phylum / family), the roll-up may have
+    # collapsed intermediate ranks into the parent bucket; in that
+    # case we still walk the surviving bucket below the parent (one
+    # tier per cascade rank).
+    if not grouping:
+        return None
+
+    tiers: list[TreeNodeTier] = []
+    for rank in _TIER_RANKS_IN_CASCADE_ORDER:
+        # Each tier walks the descendants at this rank below the
+        # parent. The recursive CTE pins ``rank IN :tier_ranks`` so
+        # the working set is bounded per cascade bucket.
+        rows = _per_tier_walk(
+            session,
+            parent_id=parent_id,
+            tier_ranks=(rank,),
+            max_depth=max_depth,
+            tier_limit=tier_limit,
+            cursor=cursor,
+            include_extinct=include_extinct,
+        )
+        if not rows:
+            continue
+
+        # Cap rows to ``tier_limit`` so the wire envelope stays
+        # bounded; the cursor is encoded from the LAST visible row
+        # when more rows exist (detected by over-fetching one extra).
+        over_fetched = len(rows) > tier_limit
+        page_rows = rows[:tier_limit]
+        next_cursor: str | None = None
+        if over_fetched:
+            last = page_rows[-1]
+            next_cursor = _encode_cursor(last.name, last.id)
+
+        tiers.append(
+            TreeNodeTier(
+                rank=rank,
+                label=_capitalize(rank),
+                examples=[row.name for row in page_rows[:3]],
+                children=[TaxonResponse.model_validate(row) for row in page_rows],
+                next_cursor=next_cursor,
+            )
+        )
+
+    return tiers or None
+
+
 __all__ = [
+    "_TIER_RANKS_IN_CASCADE_ORDER",
+    "_TIER_WALK_MAX_DEPTH",
+    "_build_next_tiers",
     "_build_tier",
     "_build_tiers_from_grouping",
     "_capitalize",
     "_children_grouped_by_rank",
     "_collect_descendants_by_rank",
+    "_decode_cursor",
+    "_encode_cursor",
     "_family_rollup",
+    "_per_tier_walk",
     "_phylum_rollup",
     "_row_to_dataclass",
 ]

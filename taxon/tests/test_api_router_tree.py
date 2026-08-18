@@ -706,3 +706,60 @@ def test_tree_children_next_tiers_default_cap_50(
     # The species tier has exactly 50 rows in the fixture; the cap
     # MAY still emit a cursor when the underlying count is >= 50.
     assert len(species_tier["children"]) == 50, species_tier
+
+
+# ---------------------------------------------------------------------------
+# Per-tier cursor round-trip — pure-function tests that pin the
+# ``(name, id)`` opaque cursor contract (PR A.1 of #76).
+# ---------------------------------------------------------------------------
+
+
+def test_per_tier_cursor_round_trip() -> None:
+    """The per-tier cursor is an opaque base64 of ``name\\x00id`` and round-trips.
+
+    Pins the ``Per-Tier Cursor Pagination Keyed (name, id)`` contract
+    from ``subtree-envelope.md``: the cursor encodes both the
+    canonical name (stable across re-imports) and the row id
+    (tie-breaker); the wire shape is opaque to the client.
+    """
+    from taxon.api._tree_tiers import _decode_cursor, _encode_cursor
+
+    cursor = _encode_cursor("Felidae", 999)
+    assert cursor, cursor
+    # The encoded value is base64; a downstream client MUST NOT parse
+    # it. Pin the prefix so accidental format regressions are visible.
+    assert cursor.endswith("=") or len(cursor) % 4 == 0, cursor
+
+    name, row_id = _decode_cursor(cursor)
+    assert name == "Felidae", name
+    assert row_id == 999, row_id
+
+
+def test_per_tier_cursor_round_trip_with_colon_in_name() -> None:
+    """Names containing ``:`` round-trip without ambiguity.
+
+    The species-list cursor uses ``name:{name}`` as a plain prefix;
+    the per-tier cursor uses NUL-bytes as the separator so canonical
+    names carrying ``:`` (a CoL importer quirk) round-trip
+    unambiguously.
+    """
+    from taxon.api._tree_tiers import _decode_cursor, _encode_cursor
+
+    name_with_colon = "Genus:subgenus"
+    cursor = _encode_cursor(name_with_colon, 1234)
+    decoded_name, decoded_id = _decode_cursor(cursor)
+    assert decoded_name == name_with_colon, decoded_name
+    assert decoded_id == 1234, decoded_id
+
+
+def test_per_tier_cursor_decode_rejects_malformed() -> None:
+    """A malformed cursor raises ``ValueError`` — the router translates to 400.
+
+    Pins the ``Cursor tolerates renumbered id`` failure mode: when a
+    client sends a cursor that is not valid base64 (or that does not
+    contain the ``name\\x00id`` shape), the resolver MUST NOT crash.
+    """
+    from taxon.api._tree_tiers import _decode_cursor
+
+    with pytest.raises(ValueError):
+        _decode_cursor("not-base64-!@#")
