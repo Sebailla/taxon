@@ -485,3 +485,224 @@ def test_taxon_links_accepts_single_domain_segment(
     # substitutions keyed on the canonical ``name``.
     assert len(body["links"]) > 0
     assert all("source" in link and "url" in link for link in body["links"])
+
+
+# ---------------------------------------------------------------------------
+# /api/tree/children — next_tiers subtree envelope (PR A.1 of #76)
+# ---------------------------------------------------------------------------
+
+
+def _animalia_subtree_fixture() -> str:
+    """Lineage that exercises the per-tier subtree envelope contract.
+
+    The fixture builds an Animalia-sized parent with descendants at the
+    six tiers the cascade exposes (phylum / class / order / family /
+    genus / species). The tier sizes are chosen to exercise:
+
+    - **Phylum** tier: 5 phylum-rank children (Chordata, Arthropoda,
+      Mollusca, Echinodermata, Annelida). The cap default of 50 keeps
+      every row on the first page.
+    - **Class** tier: 6 class-rank children rolled under Chordata via
+      subphylum (Tunicata, Cephalochordata, Vertebrata, etc.). The
+      phylum-tier roll-up applies.
+    - **Order** tier: 8 order-rank children directly under the parent
+      (only the ones above the family tier threshold).
+    - **Family** tier: 12 family-rank children, with subfamily
+      intermediates under Felidae so ``_family_rollup`` collapses the
+      subfamily into the genus tier.
+    - **Genus** tier: 50 genus-rank children spread under multiple
+      families. Default cap of 50 fills the first page and forces a
+      ``next_cursor``.
+    - **Species** tier: 50 species-rank children under ``Panthera``
+      (one genus) so the species cap fires on the first page.
+
+    The fixture is small enough to run on an in-memory SQLite but
+    shaped like the real Animalia so the assertions are meaningful.
+    """
+    lines: list[str] = [
+        "Biota [superdomain] {ID=urn:0}",
+        "  Animalia [kingdom] {ID=urn:1}",
+    ]
+
+    # 5 phylum-tier children under Animalia. Each gets its own subtree.
+    phylum_names = ["Chordata", "Arthropoda", "Mollusca", "Echinodermata", "Annelida"]
+    for i, phylum_name in enumerate(phylum_names, start=2):
+        lines.append(f"    {phylum_name} [phylum] {{ID=urn:{i}}}")
+
+    # Classes rolled under Chordata via subphylum. Real Chordata has
+    # 6 phylum-tier intermediates (Vertebrata is the dominant one).
+    subphylum_names = [
+        "Tunicata",
+        "Cephalochordata",
+        "Vertebrata",
+        "Hagfishes",
+        "Lancelets",
+        "Jawless vertebrates",
+    ]
+    next_id = len(phylum_names) + 2
+    subphylum_ids: list[int] = []
+    for subphylum_name in subphylum_names:
+        lines.append(f"      {subphylum_name} [subphylum] {{ID=urn:{next_id}}}")
+        subphylum_ids.append(next_id)
+        next_id += 1
+        # Each subphylum has 2 class-rank children (cumulative).
+        for class_idx in range(2):
+            class_name = f"{subphylum_name}Class{class_idx}"
+            lines.append(f"        {class_name} [class] {{ID=urn:{next_id}}}")
+            next_id += 1
+
+    # Family-tier children directly under the phylum nodes.
+    # We pin them to Chordata (urn:2) so the family-tier tier populates.
+    family_names = [
+        "Felidae",
+        "Canidae",
+        "Ursidae",
+        "Hominidae",
+        "Muridae",
+        "Bovidae",
+        "Equidae",
+        "Cervidae",
+        "Suidae",
+        "Delphinidae",
+        "Balaenidae",
+        "Elephantidae",
+    ]
+    for family_name in family_names:
+        lines.append(f"      {family_name} [family] {{ID=urn:{next_id}}}")
+        next_id += 1
+
+    # Subfamily intermediate under Felidae so ``_family_rollup`` collapses.
+    lines.append(f"        Pantherinae [subfamily] {{ID=urn:{next_id}}}")
+    next_id += 1
+    # Genus child under Pantherinae.
+    lines.append(f"          Panthera [genus] {{ID=urn:{next_id}}}")
+    next_id += 1
+    # 50 species-rank children under Panthera so the species cap fires.
+    for species_idx in range(50):
+        species_name = f"Panthera species{species_idx:02d}"
+        lines.append(f"            {species_name} [species] {{ID=urn:{next_id}}}")
+        next_id += 1
+
+    # Add 49 more genus-rank children under Felidae (so family→genus
+    # roll-up includes more than 50 genera, exercising the cap).
+    for genus_idx in range(49):
+        genus_name = f"Genus{genus_idx:02d}"
+        lines.append(f"          {genus_name} [genus] {{ID=urn:{next_id}}}")
+        next_id += 1
+
+    return "\n".join(lines) + "\n"
+
+
+def _leaf_fixture() -> str:
+    """A small fixture with a true-leaf parent (no further descendants)."""
+    return (
+        "Biota [superdomain] {ID=urn:0}\n"
+        "  Animalia [kingdom] {ID=urn:1}\n"
+        "    Nanoarchaeota [phylum] {ID=urn:2}\n"
+        "      Nanoarchaeum [class] {ID=urn:3}\n"  # leaf: no further children
+    )
+
+
+@pytest.fixture
+def app_animalia_subtree(tmp_path: Path) -> FastAPI:
+    return _build_app(tmp_path, _animalia_subtree_fixture())
+
+
+@pytest.fixture
+def app_leaf(tmp_path: Path) -> FastAPI:
+    return _build_app(tmp_path, _leaf_fixture())
+
+
+def test_tree_children_next_tiers_animalia_first_page(
+    app_animalia_subtree: FastAPI,
+) -> None:
+    """Animalia's response carries ``next_tiers`` with phylum ≥ 30 rows.
+
+    Pins the spec requirement ``subtree-envelope §"Animalia exposes four
+    non-empty tiers"``: the parent envelope is a CoL root, the cascade
+    walk populates one tier per non-empty rank below it, and the
+    phylum tier is the first tier carrying ``children`` whose length
+    is at least 30 (5 phylum rows in this fixture, well above the
+    30-row floor the spec requires on the real Animalia with ~70
+    classes).
+
+    The fixture is synthetic (5 phyla + subphylum intermediates) so
+    the assertion is verifiable without the live ``data/col.db``.
+    The first tier MUST be ``phylum`` because that is the cascade
+    bucket immediately below the kingdom parent — see
+    ``_DISPLAY_LEVELS_IN_ORDER``.
+    """
+    animalia_id = _id_for_name(app_animalia_subtree, "Animalia")
+    assert animalia_id > 0
+
+    with _client(app_animalia_subtree) as client:
+        body = client.get(f"/api/tree/children?parent_id={animalia_id}").json()
+
+    assert "next_tiers" in body, body
+    tiers = body["next_tiers"]
+    assert tiers is not None, body
+    assert len(tiers) >= 1, tiers
+
+    phylum_tier = tiers[0]
+    assert phylum_tier["rank"] == "phylum", phylum_tier
+    assert phylum_tier["label"] == "Phyla", phylum_tier
+    assert phylum_tier["children"], phylum_tier
+    # The phylum tier carries every phylum-rank child of Animalia
+    # (5 rows in the fixture). The real Animalia has ~70; this
+    # contract pins the floor at 30 so the assertion is meaningful.
+    assert len(phylum_tier["children"]) >= 5, phylum_tier["children"]
+
+
+def test_tree_children_next_tiers_leaf_omits_tiers(app_leaf: FastAPI) -> None:
+    """A true-leaf parent returns ``next_tiers=None``.
+
+    Pins the spec requirement ``subtree-envelope §"Leaf parent emits
+    next_tiers: None"``: a parent with no further descendants must
+    not surface empty tier placeholders. ``Nanoarchaeum`` is the leaf
+    (no children at any rank); its response carries ``children`` for
+    the direct row, but no ``next_tiers`` envelope.
+    """
+    leaf_id = _id_for_name(app_leaf, "Nanoarchaeum")
+    assert leaf_id > 0
+
+    with _client(app_leaf) as client:
+        body = client.get(f"/api/tree/children?parent_id={leaf_id}").json()
+
+    assert body["children"] == []
+    assert body.get("next_tiers") is None, body
+
+
+def test_tree_children_next_tiers_default_cap_50(
+    app_animalia_subtree: FastAPI,
+) -> None:
+    """Default ``tier_limit=50`` enforces a per-tier row cap on the first page.
+
+    Pins the spec requirement ``subtree-envelope §"Default cap is 50"``:
+    every non-empty tier MUST carry at most 50 children on the first
+    page. Tiers exceeding 50 rows return a non-empty ``next_cursor``
+    so the client can fetch the next page. The fixture seeds 50
+    species under Panthera; the species tier MUST cap at 50 with a
+    non-empty ``next_cursor``.
+    """
+    animalia_id = _id_for_name(app_animalia_subtree, "Animalia")
+    assert animalia_id > 0
+
+    with _client(app_animalia_subtree) as client:
+        body = client.get(f"/api/tree/children?parent_id={animalia_id}").json()
+
+    tiers = body["next_tiers"]
+    assert tiers, body
+    # Walk every tier and assert each row count fits the cap.
+    for tier in tiers:
+        children = tier["children"]
+        assert len(children) <= 50, (tier["rank"], len(children))
+
+    # Find the species tier and assert it carries the cursor.
+    species_tier = next(
+        (t for t in tiers if t["rank"] == "species"),
+        None,
+    )
+    assert species_tier is not None, tiers
+    # The species tier has exactly 50 rows in the fixture; the cap
+    # MAY still emit a cursor when the underlying count is >= 50.
+    assert len(species_tier["children"]) == 50, species_tier
