@@ -216,12 +216,19 @@ def test_resolve_path_returns_none_when_segment_does_not_exist(tmp_path: Path) -
     assert row is None
 
 
-def test_resolve_path_first_segment_kingdom_anchor(tmp_path: Path) -> None:
-    """The first segment must still anchor on the kingdom display bucket.
+def test_resolve_path_first_segment_accepts_any_top_bucket(tmp_path: Path) -> None:
+    """The first segment may land on any display bucket.
 
-    The skip-tier walk is only active for second-and-later
-    segments. The first segment is unanchored (we don't know its
-    parent), so it must match the kingdom bucket or nothing.
+    The cascade's CoL-style tree browse dispatches the clicked root
+    verbatim — domain-tier rows (``Eukaryota``, ``Bacteria``,
+    ``Viruses``) carry a ``realm``-mapped bucket, kingdom-tier rows
+    carry a ``kingdom`` bucket, and both must resolve when the
+    cascadePath has only that one segment. The skip-tier walk is
+    only active for second-and-later segments; the first segment
+    walks the cascade top-down so any display bucket can land the
+    hop. Without this relaxation every breadcrumb-taxon request
+    above kingdom (the CoL tree's natural root tier) returns 404
+    even when the row exists.
     """
     fixture = "Animalia [kingdom] {ID=A}\n  Chordata [phylum] {ID=B}\n"
     db = tmp_path / "taxon.db"
@@ -239,9 +246,12 @@ def test_resolve_path_first_segment_kingdom_anchor(tmp_path: Path) -> None:
         session.close()
 
     assert row_animalia is not None and row_animalia.name == "Animalia"
-    # Chordata is a phylum — the first-segment bucket is kingdom, so
-    # a single-segment lookup for "Chordata" must return None.
-    assert row_chordata_first is None, (
-        "first segment is unanchored and must hit the kingdom bucket, "
-        "not fall back to the phylum bucket"
+    # Chordata is a phylum — the first hop walks the cascade
+    # top-down so any display bucket lands. The CoL tree browse
+    # relies on this to dispatch a phylum-rooted path when the
+    # user clicks an off-tuple root.
+    assert row_chordata_first is not None, (
+        "first segment must walk every display bucket so the CoL "
+        "tree can dispatch phylum-rooted paths"
     )
+    assert row_chordata_first.name == "Chordata"

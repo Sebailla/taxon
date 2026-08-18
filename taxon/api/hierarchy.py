@@ -262,9 +262,16 @@ def _candidate_bucket_indices(last_bucket_index: int | None) -> list[int]:
 
     The cascade tuple is the source of truth for tier ordering
     (``realm, kingdom, phylum, class, order, family, genus, species``).
-    The first segment anchors on ``kingdom`` because the cascade
-    UI's first queryable tier is kingdom (Biota / Viruses come from
-    the synthesised root dropdown, never a path segment).
+    The first segment walks the cascade top-down starting from
+    ``realm`` so the resolver accepts domain-tier rows (e.g.
+    ``Eukaryota``, ``Bacteria``, ``Viruses``) that the CoL-style
+    tree browse dispatches before the cascade has reached a
+    kingdom. The CoL tree starts at ``parent_id IS NULL`` rows
+    whose rank maps to ``realm`` (domain / superdomain / realm);
+    the cascade UI's first queryable tier was historically kingdom
+    but the tree browse dispatches a ``path:change`` with the
+    clicked root as the sole segment, so the resolver must accept
+    any top-of-tree rank on the first hop.
 
     Each subsequent segment tries two buckets in priority order:
 
@@ -283,7 +290,12 @@ def _candidate_bucket_indices(last_bucket_index: int | None) -> list[int]:
     descendants keep resolving through the same anchor.
     """
     if last_bucket_index is None:
-        return [_DISPLAY_LEVELS_IN_ORDER.index("kingdom")]
+        # Walk the cascade top-down so domain / realm / kingdom
+        # rows all resolve on the first hop. The CoL tree
+        # dispatches the clicked root verbatim; restricting the
+        # first segment to kingdom made every breadcrumb-taxon
+        # request above kingdom 404.
+        return list(range(len(_DISPLAY_LEVELS_IN_ORDER)))
     if last_bucket_index >= len(_DISPLAY_LEVELS_IN_ORDER) - 1:
         return [last_bucket_index]
     return [last_bucket_index + 1, last_bucket_index]
