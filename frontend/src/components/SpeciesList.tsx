@@ -13,7 +13,9 @@ the API and offer a "Load more" affordance when ``cursor`` is set.
 */
 
 import type { TaxonResponse } from "../api";
+import { speciesKey } from "../api";
 import { dispatchTaxonSelect } from "../events/taxonSelect";
+import { useWorkspace } from "../store/workspace";
 
 interface SpeciesListProps {
   rows: TaxonResponse[];
@@ -58,27 +60,7 @@ export function SpeciesList(props: SpeciesListProps): JSX.Element {
         className="max-h-96 space-y-2 overflow-y-auto rounded-card border border-border bg-surface p-2"
       >
         {props.rows.map((row) => (
-          <li key={row.id} className="list-none">
-            <button
-              type="button"
-              onClick={() => {
-                dispatchTaxonSelect({
-                  row,
-                  breadcrumb: props.breadcrumb,
-                  parentSegments: props.parentSegments,
-                });
-              }}
-              className="flex w-full items-center justify-between gap-3 rounded-btn border border-border bg-bg p-2 text-left hover:bg-surface"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-sm text-navy">{row.name}</p>
-                {row.display_name !== row.name ? (
-                  <p className="truncate text-xs text-slate">{row.display_name}</p>
-                ) : null}
-              </div>
-              <MarkerBadges row={row} />
-            </button>
-          </li>
+          <SpeciesRow key={row.id} row={row} props={props} />
         ))}
       </ul>
       {props.cursor !== null && props.onLoadMore ? (
@@ -91,6 +73,34 @@ export function SpeciesList(props: SpeciesListProps): JSX.Element {
         </button>
       ) : null}
     </div>
+  );
+}
+
+function SpeciesRow({ row, props }: { row: TaxonResponse; props: SpeciesListProps }): JSX.Element {
+  const [genus, ...epithetParts] = row.name.split(" ");
+  const epithet = epithetParts.join(" ");
+  const key = speciesKey(genus, epithet);
+  const explored = useWorkspace((state) => state.explored.has(key));
+  const folder = useWorkspace((state) => state.folders.get(key));
+  const toggleExplored = useWorkspace((state) => state.toggleExplored);
+  const createFolder = useWorkspace((state) => state.createFolder);
+
+  return (
+    <li className="flex list-none items-center gap-2 rounded-btn border border-border bg-bg p-2">
+      <button type="button" onClick={() => dispatchTaxonSelect({ row, breadcrumb: props.breadcrumb, parentSegments: props.parentSegments })} className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-sm text-navy">{row.name}</p>
+          {row.display_name !== row.name ? <p className="truncate text-xs text-slate">{row.display_name}</p> : null}
+        </div>
+        <MarkerBadges row={row} />
+      </button>
+      <input type="checkbox" checked={explored} aria-label={`Mark ${row.name} as explored`} onChange={() => void toggleExplored(genus, epithet)} />
+      {folder ? (
+        <span title={folder} className="rounded-chip border border-border px-2 py-0.5 text-xs text-slate">folder</span>
+      ) : (
+        <button type="button" aria-label={`Create folder for ${row.name}`} onClick={() => void createFolder(genus, epithet)} className="rounded-btn border border-border px-2 py-1 text-xs text-slate">Create folder</button>
+      )}
+    </li>
   );
 }
 
