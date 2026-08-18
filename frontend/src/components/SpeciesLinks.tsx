@@ -53,6 +53,7 @@ function SourceLink({ link, genus, epithet }: { link: SearchLinkItem; genus?: st
   const key = genus && epithet ? speciesKey(genus, epithet) : null;
   const visited = useWorkspace((state) => key !== null && (state.visitedLinks.get(key)?.has(link.source) ?? false));
   const toggleVisited = useWorkspace((state) => state.toggleVisited);
+  const setActiveLink = useWorkspace((state) => state.setActiveLink);
   return (
     <div role="listitem" className={`flex items-center gap-2 rounded-btn border bg-surface px-3 py-2 text-sm ${visited ? "border-muted text-slate line-through" : isScihub ? "border-red text-navy" : "border-border text-navy"}`}>
       {genus && epithet ? (
@@ -63,6 +64,18 @@ function SourceLink({ link, genus, epithet }: { link: SearchLinkItem; genus?: st
         target="_blank"
         rel="noopener noreferrer"
         aria-label={`${link.label} (opens in a new tab)`}
+        onClick={() => {
+          // Populating ``activeLink`` is the contract for the
+          // "Embedded search result" explorer panel. The
+          // species-cell click is the ONLY trigger that mutates
+          // the active link — the per-taxon breadcrumb-links panel
+          // does NOT have genus/epithet props, so the click is a
+          // no-op there. The new tab still opens via the anchor's
+          // ``target="_blank"`` attribute.
+          if (key !== null) {
+            setActiveLink({ speciesKey: key, source: link.source, url: link.url });
+          }
+        }}
         className="inline-flex min-w-0 flex-1 items-center justify-between gap-2 hover:underline"
       >
         <span>{link.label}</span>
