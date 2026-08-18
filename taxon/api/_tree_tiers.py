@@ -24,6 +24,7 @@ roll-up behaviour with the cascade resolver.
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from typing import Final
 
 from sqlalchemy import bindparam, func, select, text
@@ -36,6 +37,7 @@ from taxon.api.hierarchy import (
 from taxon.api.schemas import (
     NextTier,
     TaxonResponse,
+    TreeNodeResponse,
     TreeNodeTier,
 )
 from taxon.schema import Taxon
@@ -71,6 +73,43 @@ def _capitalize(s: str) -> str:
     if not s:
         return s
     return s[0].upper() + s[1:]
+
+
+# Ranks whose plural label drops the trailing ``-s`` because the rank
+# already ends in ``s``. Spec requirement
+# ``subtree-envelope §"label capitalisation for plurals"``: edge
+# cases ``species → Species``, ``subspecies → Subspecies``.
+_PLURAL_LABEL_NO_SUFFIX: Final[frozenset[str]] = frozenset({"species", "subspecies"})
+
+# Explicit irregular-plural map for ranks whose English plural does
+# not follow the simple ``+s`` rule. The cascade UI renders these
+# labels verbatim, so the helper hard-codes the canonical forms
+# (``phylum → Phyla``) rather than relying on locale-aware rules.
+_PLURAL_LABEL_IRREGULAR: Final[dict[str, str]] = {
+    "phylum": "Phyla",
+    "family": "Families",
+    "class": "Classes",
+    "order": "Orders",
+    "genus": "Genera",
+}
+
+
+def _plural_label(rank: str) -> str:
+    """Build the human-facing plural label for a tier rank.
+
+    Most ranks pluralise with the suffix ``-s``
+    (``class → Classes``); ranks that already end in ``s`` drop the
+    suffix (``species → Species``); a few ranks carry an irregular
+    plural that matches the cascade UI's existing convention
+    (``phylum → Phyla``, ``genus → Genera``). The result is the wire
+    label the cascade UI renders on the tier group header.
+    """
+    if rank in _PLURAL_LABEL_IRREGULAR:
+        return _PLURAL_LABEL_IRREGULAR[rank]
+    base = _capitalize(rank)
+    if rank.lower() in _PLURAL_LABEL_NO_SUFFIX:
+        return base
+    return f"{base}s"
 
 
 def _children_grouped_by_rank(
@@ -284,7 +323,7 @@ def _encode_cursor(name: str, id: int) -> str:
     The encoded value is opaque to the client; it MUST NOT be parsed
     or interpreted by anything but :func:`_decode_cursor`.
     """
-    raw = f"{name}\x00{id}".encode("utf-8")
+    raw = f"{name}\x00{id}".encode()
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
 
@@ -323,8 +362,13 @@ def _per_tier_walk(
     tier_limit: int = 50,
     cursor: tuple[str, int] | None = None,
     include_extinct: bool = True,
-) -> list[TaxonRow]:
+) -> list[Taxon]:
     """Walk the per-tier subtree under ``parent_id`` with a recursive CTE.
+
+    Returns the ORM ``Taxon`` rows (NOT dataclasses) so the caller
+    can enrich them with derived fields (``has_children``,
+    ``species_count``, ``authorship``) the same way the
+    direct-children slice does.
 
     The query pins ``rank IN :tier_ranks`` so the working set is
     bounded per cascade bucket — the 57s cliff in issue #76 came
@@ -348,12 +392,12 @@ def _per_tier_walk(
     if not tier_ranks:
         return []
 
-    # The ``tier_ranks`` parameter is a tuple — ``expanding`` flattens
-    # the bind to a SQL ``(rank1, rank2, ...)`` clause. SQLite accepts
-    # an empty IN list as 0 rows so we short-circuit on empty.
-    extinct_clause = (
-        "" if include_extinct else " AND t.is_extinct = 0 "
-    )
+    # Over-fetch by one so the caller can detect "more rows exist"
+    # without a second round trip; the caller slices back to
+    # ``tier_limit`` after the cursor decision.
+    fetch_limit = tier_limit + 1
+
+    extinct_clause = "" if include_extinct else " AND t.is_extinct = 0 "
 
     if cursor is not None:
         after_name, after_id = cursor
@@ -373,18 +417,16 @@ def _per_tier_walk(
             SELECT child.id, 0
               FROM taxa AS child
               WHERE child.parent_id = :parent_id
-                AND lower(child.rank) IN :tier_ranks
             UNION ALL
             SELECT next_child.id, td.depth + 1
               FROM taxa AS next_child
               JOIN tier_descendants AS td ON next_child.parent_id = td.id
               WHERE td.depth < :max_depth
-                AND lower(next_child.rank) IN :tier_ranks
         )
-        SELECT t.id, t.name, t.display_name, t.rank, t.parent_id,
-               t.is_synonym, t.is_extinct, t.is_uncertain, t.is_unassigned
+        SELECT t.id
           FROM taxa AS t
           JOIN tier_descendants AS d ON t.id = d.id
+          WHERE lower(t.rank) IN :tier_ranks
         """
         + extinct_clause
         + cursor_clause
@@ -397,40 +439,34 @@ def _per_tier_walk(
         "parent_id": parent_id,
         "tier_ranks": tuple(tier_ranks),
         "max_depth": max_depth,
-        "tier_limit": tier_limit,
+        "tier_limit": fetch_limit,
     }
     if cursor is not None:
         params["after_name"] = after_name.lower()
         params["after_id"] = after_id
 
-    rows = session.execute(stmt, params).all()
-    out: list[TaxonRow] = []
-    for row in rows:
-        out.append(
-            TaxonRow(
-                id=int(row.id),
-                name=str(row.name),
-                display_name=str(row.display_name),
-                rank=str(row.rank),
-                parent_id=row.parent_id,
-                is_synonym=bool(row.is_synonym),
-                is_extinct=bool(row.is_extinct),
-                is_uncertain=bool(row.is_uncertain),
-                is_unassigned=bool(row.is_unassigned),
-            )
-        )
-    return out
+    id_rows = session.execute(stmt, params).all()
+    if not id_rows:
+        return []
+    # Re-fetch the ORM rows by id so the caller can use the same
+    # enrichment path as the direct-children slice. The list
+    # preserves the CTE ordering (case-insensitive by name).
+    ids_ordered = [int(row.id) for row in id_rows]
+    fetched = session.scalars(select(Taxon).where(Taxon.id.in_(ids_ordered))).all()
+    by_id = {t.id: t for t in fetched}
+    return [by_id[tid] for tid in ids_ordered if tid in by_id]
 
 
 def _build_next_tiers(
     session: Session,
     parent_id: int,
-    direct_children: list[TaxonRow],
+    direct_children_rows: list[TaxonRow],
     *,
     tier_limit: int = 50,
     cursor: tuple[str, int] | None = None,
     include_extinct: bool = True,
     max_depth: int = _TIER_WALK_MAX_DEPTH,
+    enrich: Callable[[Taxon], TreeNodeResponse] | None = None,
 ) -> list[TreeNodeTier] | None:
     """Build the per-tier envelope for ``GET /api/tree/children``.
 
@@ -440,11 +476,12 @@ def _build_next_tiers(
     parent with no descendants at any rank returns ``None`` so the
     envelope stays additive — old clients see ``next_tiers: null``.
 
-    The cursor parameter is honoured per-tier: a client advancing
-    one tier with ``?tier={rank}&cursor={c}`` sees that tier
-    advance while every other tier's payload stays cached. When
-    ``cursor`` is ``None`` (the default envelope call) every tier
-    returns its first page with a fresh cursor.
+    The ``enrich`` callback converts each ``Taxon`` ORM row into a
+    :class:`TreeNodeResponse` carrying the derived fields the tree UI
+    needs (``has_children``, ``species_count``, ``authorship``). The
+    caller (the router) passes the same enrichment helper it uses
+    for the direct-children slice so both envelopes share the same
+    derived-field contract.
 
     The :func:`_phylum_rollup` / :func:`_family_rollup` rules apply
     so off-tuple intermediates (subphylum / infraphylum / etc.) fold
@@ -452,13 +489,9 @@ def _build_next_tiers(
     endpoint — the wire shape stays symmetric with
     ``GET /api/path-children``.
     """
-    children_by_rank = _children_grouped_by_rank(session, parent_id)
-    # ``direct_children`` is unused here but kept on the signature so
-    # the router can pass the already-materialised list without an
-    # extra round trip when the response shape widens in follow-up
-    # work units (the per-tier CTE shares the same session).
-    _ = direct_children
+    _ = direct_children_rows  # accepted for signature parity; unused
 
+    children_by_rank = _children_grouped_by_rank(session, parent_id)
     if not children_by_rank:
         return None
 
@@ -468,30 +501,17 @@ def _build_next_tiers(
         parent_row = _row_to_dataclass(parent)
 
     # Apply the roll-up rules when the parent is a phylum or family.
-    # For other ranks the per-tier walk enumerates the direct
-    # children of each cascade bucket directly; the roll-up is a
-    # no-op because there are no off-tuple intermediates in those
-    # buckets under realistic data shapes.
     grouping = children_by_rank
     if parent_row is not None and parent_row.rank.lower() == "phylum":
         grouping, _ = _phylum_rollup(session, children_by_rank)
     elif parent_row is not None and parent_row.rank.lower() == "family":
         grouping, _ = _family_rollup(session, children_by_rank)
 
-    # When the parent is itself a tier rank (e.g. a kingdom), each
-    # bucket below the parent gets its own tier. When the parent is
-    # at a tier rank (phylum / family), the roll-up may have
-    # collapsed intermediate ranks into the parent bucket; in that
-    # case we still walk the surviving bucket below the parent (one
-    # tier per cascade rank).
     if not grouping:
         return None
 
     tiers: list[TreeNodeTier] = []
     for rank in _TIER_RANKS_IN_CASCADE_ORDER:
-        # Each tier walks the descendants at this rank below the
-        # parent. The recursive CTE pins ``rank IN :tier_ranks`` so
-        # the working set is bounded per cascade bucket.
         rows = _per_tier_walk(
             session,
             parent_id=parent_id,
@@ -504,22 +524,28 @@ def _build_next_tiers(
         if not rows:
             continue
 
-        # Cap rows to ``tier_limit`` so the wire envelope stays
-        # bounded; the cursor is encoded from the LAST visible row
-        # when more rows exist (detected by over-fetching one extra).
+        # ``_per_tier_walk`` over-fetches by one so we can detect
+        # "more rows exist" without a second round trip.
         over_fetched = len(rows) > tier_limit
         page_rows = rows[:tier_limit]
         next_cursor: str | None = None
         if over_fetched:
             last = page_rows[-1]
-            next_cursor = _encode_cursor(last.name, last.id)
+            next_cursor = _encode_cursor(last.name, int(last.id))
+
+        if enrich is None:
+            raise ValueError(
+                "enrich callback is required so tier rows carry the derived "
+                "TreeNodeResponse fields (has_children, species_count, authorship)"
+            )
+        child_responses = [enrich(row) for row in page_rows]
 
         tiers.append(
             TreeNodeTier(
                 rank=rank,
-                label=_capitalize(rank),
+                label=_plural_label(rank),
                 examples=[row.name for row in page_rows[:3]],
-                children=[TaxonResponse.model_validate(row) for row in page_rows],
+                children=child_responses,
                 next_cursor=next_cursor,
             )
         )
@@ -541,5 +567,6 @@ __all__ = [
     "_family_rollup",
     "_per_tier_walk",
     "_phylum_rollup",
+    "_plural_label",
     "_row_to_dataclass",
 ]

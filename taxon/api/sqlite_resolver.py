@@ -42,11 +42,23 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+# Shared roll-up helpers extracted from this module so the tree-browse
+# envelope (:mod:`taxon.api.tree`) can reuse them without an import
+# cycle. Re-exported under their original names so the public surface
+# of this module is preserved.
+from taxon.api._tree_tiers import (  # noqa: F401
+    _build_tier,
+    _build_tiers_from_grouping,
+    _capitalize,
+    _children_grouped_by_rank,
+    _collect_descendants_by_rank,
+    _family_rollup,
+    _phylum_rollup,
+)
 from taxon.api.errors import NotFoundError
 from taxon.api.hierarchy import (
     TaxonRow,
     _effective_display_level,
-    _intermediate_ranks_for,
     resolve_path_by_display_level,
 )
 from taxon.api.schemas import (
@@ -63,19 +75,6 @@ from taxon.api.species import (
     _decode_cursor,
     _encode_cursor,
     parse_include,
-)
-# Shared roll-up helpers extracted from this module so the tree-browse
-# envelope (:mod:`taxon.api.tree`) can reuse them without an import
-# cycle. Re-exported under their original names so the public surface
-# of this module is preserved.
-from taxon.api._tree_tiers import (  # noqa: F401
-    _build_tier,
-    _build_tiers_from_grouping,
-    _capitalize,
-    _children_grouped_by_rank,
-    _collect_descendants_by_rank,
-    _family_rollup,
-    _phylum_rollup,
 )
 from taxon.schema import Taxon
 

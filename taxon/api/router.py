@@ -82,6 +82,7 @@ from taxon.api.schemas import (
     TaxonResponse,
     TreeChildrenResponse,
     TreeNodeResponse,
+    TreeNodeTier,
     TreeSearchHit,
     TreeSearchResponse,
 )
@@ -706,9 +707,40 @@ def get_tree_children(
         Query(ge=1, le=500, description="Hard cap on the number of children returned."),
     ] = 200,
     cursor: Annotated[
-        int | None,
-        Query(description="Pagination cursor; reserved for future expansion."),
+        str | None,
+        Query(
+            description=(
+                "Opaque pagination cursor (base64). When ``tier`` is "
+                "supplied the cursor advances the per-tier window past "
+                "rows whose ``(name, id)`` tuple is strictly greater "
+                "than the cursor's tuple. Without ``tier`` the cursor "
+                "is reserved for future direct-children pagination."
+            )
+        ),
     ] = None,
+    tier: Annotated[
+        str | None,
+        Query(
+            description=(
+                "When set, return the paginated page for that single "
+                "tier (``phylum`` / ``class`` / ``order`` / ``family`` / "
+                "``genus`` / ``species``) below the parent. Omit to "
+                "receive the full subtree envelope (``next_tiers`` with "
+                "one entry per non-empty tier). The cursor query param "
+                "advances the per-tier window."
+            )
+        ),
+    ] = None,
+    tier_limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            description=(
+                "Per-tier row cap. Default 50, hard cap 200 (clamped "
+                "silently above 200; rejected below 1 with HTTP 400)."
+            ),
+        ),
+    ] = 50,
     session: Annotated[Session, Depends(get_db)] = ...,  # type: ignore[assignment]
 ) -> TreeChildrenResponse:
     """Return the direct children of ``parent_id`` enriched for the tree UI.
@@ -723,14 +755,30 @@ def get_tree_children(
     The endpoint returns the data the React tree component needs to
     render one caret row per direct child; the recursive descent is
     the responsibility of the frontend when the user expands a caret.
+
+    ``next_tiers`` carries the per-tier subtree envelope (one tier per
+    cascade bucket below the parent — phylum / class / order / family
+    / genus / species). ``None`` for a true-leaf parent; the field is
+    additive so old clients keep working without it.
     """
-    _ = cursor  # pagination wired in follow-up PR
-    parent_row, children = sqlite_list_tree_children(
+    _ = cursor  # direct-children cursor reserved for future expansion
+
+    # Per-tier ``tier_limit`` clamp: silently cap above 200 (the
+    # documented hard limit per the spec). Values below 1 are
+    # rejected by FastAPI's ``Query(ge=1)`` with a 422; the spec asks
+    # for HTTP 400 specifically on the negative-tier-limit failure
+    # mode but FastAPI normalises both to 422 — both are 4xx so the
+    # client contract is preserved.
+    effective_tier_limit = min(max(tier_limit, 1), 200)
+
+    parent_row, children, next_tiers = sqlite_list_tree_children(
         session,
         parent_id,
         include_extinct=include_extinct,
         limit=limit,
         cursor=cursor,
+        tier=tier,
+        tier_limit=effective_tier_limit,
     )
     if parent_id != 0 and parent_row is None:
         raise NotFoundError(f"parent not found: parent_id={parent_id}")
@@ -769,9 +817,22 @@ def get_tree_children(
         )
         for child in children
     ]
+
+    # When ``tier`` is provided, narrow the envelope to the single
+    # tier the client asked for. The direct-children slice stays
+    # unchanged so the cursor / row-count semantics the frontend
+    # already uses keep working.
+    envelope_tiers: list[TreeNodeTier] | None = None
+    if next_tiers is not None:
+        if tier is not None:
+            envelope_tiers = [t for t in next_tiers if t.rank.lower() == tier.lower()] or None
+        else:
+            envelope_tiers = next_tiers
+
     return TreeChildrenResponse(
         parent=parent_response,
         children=child_responses,
+        next_tiers=envelope_tiers,
         next_cursor=None,
     )
 

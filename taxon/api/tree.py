@@ -37,6 +37,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from taxon.api.hierarchy import _to_row
+from taxon.api.schemas import TreeNodeResponse, TreeNodeTier
 from taxon.schema import Taxon
 
 # When a parent taxon has more than this many direct children, the
@@ -207,15 +208,49 @@ def _decorate_children_with_flags(
     return children
 
 
+def build_tree_node_response(
+    session: Session,
+    taxon: Taxon,
+    has_children: bool = False,
+) -> TreeNodeResponse:
+    """Build a :class:`TreeNodeResponse` from a ``Taxon`` ORM row.
+
+    Shared between the direct-children slice and the per-tier CTE
+    walker so both surfaces apply the same derived-field contract
+    (``has_children``, ``species_count``, ``authorship``). The
+    ``has_children`` flag is computed in batch by the caller because
+    the recursive per-tier CTE already materialises every child row
+    and a per-row EXISTS query would multiply the round-trip count.
+    """
+    base = _to_row(taxon)
+    species_count = _count_descendant_species(session, taxon.id)
+    return TreeNodeResponse(
+        id=base.id,
+        name=base.name,
+        display_name=base.display_name,
+        rank=base.rank,
+        parent_id=base.parent_id,
+        authorship=split_authorship(base.name, base.display_name),
+        has_children=has_children,
+        species_count=species_count,
+        is_synonym=base.is_synonym,
+        is_extinct=base.is_extinct,
+        is_uncertain=base.is_uncertain,
+        is_unassigned=base.is_unassigned,
+    )
+
+
 def list_tree_children(
     session: Session,
     parent_id: int,
     *,
     include_extinct: bool = True,
     limit: int = 200,
-    cursor: int | None = None,
-) -> tuple[TreeNodeRow | None, list[TreeNodeRow]]:
-    """Return ``(parent, children)`` for the given ``parent_id``.
+    cursor: str | int | None = None,
+    tier: str | None = None,
+    tier_limit: int = 50,
+) -> tuple[TreeNodeRow | None, list[TreeNodeRow], list[TreeNodeTier] | None]:
+    """Return ``(parent, children, next_tiers)`` for the given ``parent_id``.
 
     A ``parent_id`` of ``0`` is the sentinel for "roots" — the SQL
     fetch uses ``parent_id IS NULL`` and the parent envelope
@@ -233,9 +268,9 @@ def list_tree_children(
     - ``authorship`` — the citation tail from :func:`split_authorship`.
 
     Ordering is alphabetical by canonical name. The optional
-    ``cursor`` argument is reserved for pagination; the first PR
-    ships the 200-row cap and the cursor is left as a hook for
-    future expansion.
+    ``cursor`` argument is reserved for pagination of the direct
+    children; the first PR ships the 200-row cap and the cursor is
+    left as a hook for future expansion.
 
     The ``include_extinct`` flag defaults to ``True`` so the
     endpoint surfaces extinct rows by default (the CoL root
@@ -244,8 +279,33 @@ def list_tree_children(
     ``Taxon.is_extinct.is_(False)`` to the WHERE clause so the
     filtered list is computed server-side — the client never has to
     post-filter.
+
+    ``next_tiers`` carries the per-tier subtree envelope (one tier
+    per cascade bucket below the parent — phylum / class / order /
+    family / genus / species). ``None`` for a true-leaf parent; the
+    field is additive so old clients keep working without it.
+
+    When ``tier`` is provided the per-tier envelope is computed for
+    that single rank only — the wire envelope narrows to a single
+    tier so the client can advance one bucket at a time. The
+    ``tier_limit`` parameter caps the per-tier row count (default
+    ``50``, hard cap ``200``); values above the cap are clamped
+    silently by the router.
     """
-    _ = cursor  # pagination wired in follow-up PR
+    _ = cursor  # direct-children cursor reserved for future expansion
+
+    from taxon.api._tree_tiers import _build_next_tiers, _decode_cursor
+
+    # When ``tier`` is supplied, decode the opaque base64 cursor
+    # into the ``(name, id)`` tuple the per-tier CTE expects.
+    # Other callers pass ``cursor=None`` and the envelope returns
+    # the first page for every tier.
+    per_tier_cursor: tuple[str, int] | None = None
+    if cursor is not None and isinstance(cursor, str) and tier is not None:
+        try:
+            per_tier_cursor = _decode_cursor(cursor)
+        except ValueError:
+            per_tier_cursor = None
 
     if parent_id == 0:
         # Roots: every taxon with ``parent_id IS NULL`` (5 rows on
@@ -261,10 +321,11 @@ def list_tree_children(
             stmt = stmt.where(Taxon.is_extinct.is_(False))
         children_orm = list(session.scalars(stmt).all())
         parent_row: TreeNodeRow | None = None
+        next_tiers: list[TreeNodeTier] | None = None
     else:
         parent_orm = session.get(Taxon, parent_id)
         if parent_orm is None:
-            return None, []
+            return None, [], None
         children_orm = _children_query_base(session, parent_id)
         if not include_extinct:
             # Filter the child ORM list in-place rather than re-running
@@ -285,6 +346,24 @@ def list_tree_children(
             is_extinct=parent_base.is_extinct,
             is_uncertain=parent_base.is_uncertain,
             is_unassigned=parent_base.is_unassigned,
+        )
+
+        # Compute the per-tier subtree envelope once for the parent.
+        # The cursor is None on the first-page call; clients advance
+        # one tier at a time with ``?tier={rank}&cursor={c}``.
+        # The ``enrich`` callback closes over ``session`` so the
+        # tier walker can call it as ``enrich(taxon_row)``.
+        def _enrich_taxon(taxon: Taxon) -> TreeNodeResponse:
+            return build_tree_node_response(session, taxon)
+
+        next_tiers = _build_next_tiers(
+            session,
+            parent_id=parent_id,
+            direct_children_rows=[],
+            tier_limit=tier_limit,
+            cursor=per_tier_cursor,
+            include_extinct=include_extinct,
+            enrich=_enrich_taxon,
         )
 
     children_orm = _decorate_children_with_flags(session, children_orm)
@@ -321,7 +400,7 @@ def list_tree_children(
                 is_unassigned=child_base.is_unassigned,
             )
         )
-    return parent_row, out
+    return parent_row, out, next_tiers
 
 
 # Sentinel returned when the helper finds no matches -- the

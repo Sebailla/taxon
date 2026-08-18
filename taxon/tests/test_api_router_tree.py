@@ -583,9 +583,10 @@ def _animalia_subtree_fixture() -> str:
         lines.append(f"            {species_name} [species] {{ID=urn:{next_id}}}")
         next_id += 1
 
-    # Add 49 more genus-rank children under Felidae (so family→genus
-    # roll-up includes more than 50 genera, exercising the cap).
-    for genus_idx in range(49):
+    # Add 60 more genus-rank children under Felidae (so family→genus
+    # roll-up includes 61 genera total — Panthera + 60 GenusNN rows).
+    # The first page caps at 50 rows and emits a ``next_cursor``.
+    for genus_idx in range(60):
         genus_name = f"Genus{genus_idx:02d}"
         lines.append(f"          {genus_name} [genus] {{ID=urn:{next_id}}}")
         next_id += 1
@@ -763,3 +764,103 @@ def test_per_tier_cursor_decode_rejects_malformed() -> None:
 
     with pytest.raises(ValueError):
         _decode_cursor("not-base64-!@#")
+
+
+def test_tree_children_next_tiers_pagination_round_trip(
+    app_animalia_subtree: FastAPI,
+) -> None:
+    """The species tier's ``next_cursor`` returns the next 50 rows in ``(name, id)`` order.
+
+    Pins the spec requirement
+    ``subtree-envelope §"Cursor round-trips the next page"``: a tier
+    exceeding the cap MUST emit a non-empty ``next_cursor``; the
+    second page (sent with ``?tier=species&cursor=...``) MUST return
+    the rows immediately after the cursor's ``(name, id)`` tuple.
+
+    The fixture seeds exactly 50 species under Panthera; the second
+    page is empty so the test pins the round-trip on the genus tier
+    (50 rows under Felidae + Pantherinae rolled up). The cursor is
+    sent through the router (``/api/tree/children?parent_id=...
+    &tier=genus&cursor=...``) so the contract covers both the
+    helper AND the wire-level handler.
+    """
+    animalia_id = _id_for_name(app_animalia_subtree, "Animalia")
+    assert animalia_id > 0
+
+    with _client(app_animalia_subtree) as client:
+        body = client.get(f"/api/tree/children?parent_id={animalia_id}").json()
+
+    tiers = body["next_tiers"]
+    assert tiers, body
+
+    # The genus tier is the one that exceeds the cap (50 genera
+    # rolled up under Felidae) and therefore emits a cursor.
+    genus_tier = next(
+        (t for t in tiers if t["rank"] == "genus"),
+        None,
+    )
+    assert genus_tier is not None, tiers
+    first_page_names = [c["name"] for c in genus_tier["children"]]
+    assert len(first_page_names) == 50, genus_tier
+    assert genus_tier["next_cursor"], genus_tier
+
+    # The second page returns rows in (name, id) order strictly
+    # after the cursor. The fixture seeds 61 genera (Panthera + 60
+    # GenusNN); the first page has 50 rows; the second page has 11
+    # rows (the over-fetch-of-1 logic emits a fresh cursor only
+    # when more rows remain).
+    with _client(app_animalia_subtree) as client:
+        second_body = client.get(
+            f"/api/tree/children?parent_id={animalia_id}"
+            f"&tier=genus&cursor={genus_tier['next_cursor']}"
+        ).json()
+
+    second_tier = second_body["next_tiers"][0] if second_body["next_tiers"] else None
+    assert second_tier is not None, second_body
+    assert second_tier["rank"] == "genus", second_tier
+    second_page_names = [c["name"] for c in second_tier["children"]]
+    assert len(second_page_names) == 11, second_tier
+    assert second_tier["next_cursor"] is None, second_tier
+
+
+def test_tree_children_next_tiers_off_tuple_collapse(
+    app_animalia_subtree: FastAPI,
+) -> None:
+    """Chordata's subphylum children roll under the class tier via ``_phylum_rollup``.
+
+    Pins the spec requirement
+    ``subtree-envelope §"Phylum roll-up collapses intermediates"``:
+    the class tier MUST include both direct ``class``-rank children
+    AND class-tier descendants reached through subphylum ranks. The
+    fixture seeds 6 subphylum rows under Chordata, each with 2
+    class-rank children — 12 class rows total, even though Chordata
+    has zero direct ``class``-rank children.
+
+    The assertion is non-trivial because it pins a behaviour (off-
+    tuple roll-up) that would break if the class tier only carried
+    direct class children.
+    """
+    animalia_id = _id_for_name(app_animalia_subtree, "Animalia")
+    assert animalia_id > 0
+
+    with _client(app_animalia_subtree) as client:
+        body = client.get(f"/api/tree/children?parent_id={animalia_id}").json()
+
+    tiers = body["next_tiers"]
+    assert tiers, body
+
+    class_tier = next(
+        (t for t in tiers if t["rank"] == "class"),
+        None,
+    )
+    assert class_tier is not None, tiers
+    class_names = [c["name"] for c in class_tier["children"]]
+    # 6 subphylum rows × 2 class children each = 12 class rows,
+    # surfaced via the phylum roll-up. No ``subphylum`` tier.
+    assert len(class_names) >= 12, class_tier
+
+    subphylum_tier = next(
+        (t for t in tiers if t["rank"] == "subphylum"),
+        None,
+    )
+    assert subphylum_tier is None, tiers
