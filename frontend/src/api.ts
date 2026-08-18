@@ -40,7 +40,9 @@ branch on:
 The client never throws on HTTP errors — callers explicitly branch
 on the result type. This keeps the component code declarative and
 testable.
-*/
+ */
+
+import { z } from "zod";
 
 // ---------------------------------------------------------------------------
 // Public types (mirror of taxon/api/schemas.py)
@@ -185,6 +187,27 @@ export type ApiResult<T> =
   | { status: "ambiguous"; candidates: AmbiguityCandidate[] }
   | { status: "error"; detail: string };
 
+const workspaceSpeciesSchema = z.object({
+  genus: z.string(),
+  epithet: z.string(),
+  explored_at: z.string(),
+});
+const exploredListSchema = z.object({ species: z.array(workspaceSpeciesSchema) });
+const folderSchema = z.object({ path: z.string(), exists: z.boolean().default(true) });
+const visitedListSchema = z.object({
+  genus: z.string(),
+  epithet: z.string(),
+  sources: z.array(z.object({ source: z.string(), visited_at: z.string() })),
+});
+
+export type ExploredListResponse = z.infer<typeof exploredListSchema>;
+export type SpeciesFolderResponse = z.infer<typeof folderSchema>;
+export type LinkVisitedListResponse = z.infer<typeof visitedListSchema>;
+
+export function speciesKey(genus: string, epithet: string): string {
+  return encodeURIComponent(`${genus}|${epithet}`);
+}
+
 // ---------------------------------------------------------------------------
 // Low-level fetch helper
 // ---------------------------------------------------------------------------
@@ -237,6 +260,57 @@ async function apiGet<T>(
       detail: err instanceof Error ? err.message : "network error",
     };
   }
+}
+
+async function apiRequest<T>(
+  path: string,
+  method: "GET" | "POST" | "DELETE",
+  schema?: z.ZodType<T>,
+): Promise<ApiResult<T>> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
+      method,
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 200 || res.status === 201) {
+      const parsed = schema?.safeParse(await res.json());
+      if (parsed && !parsed.success) {
+        return { status: "error", detail: `Invalid response: ${parsed.error.message}` };
+      }
+      return { status: "ok", data: parsed?.data as T };
+    }
+    if (res.status === 204) return { status: "ok", data: undefined as T };
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    if (res.status === 404) return { status: "not-found", detail: body.detail ?? "not found" };
+    return { status: "error", detail: body.detail ?? `HTTP ${res.status}` };
+  } catch (err) {
+    return { status: "error", detail: err instanceof Error ? err.message : "network error" };
+  }
+}
+
+export function fetchExploredList(): Promise<ApiResult<ExploredListResponse>> {
+  return apiRequest("/explored/list", "GET", exploredListSchema);
+}
+export function postExplored(genus: string, epithet: string): Promise<ApiResult<z.infer<typeof workspaceSpeciesSchema>>> {
+  return apiRequest(`/explored/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}`, "POST", workspaceSpeciesSchema);
+}
+export function deleteExplored(genus: string, epithet: string): Promise<ApiResult<void>> {
+  return apiRequest(`/explored/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}`, "DELETE");
+}
+export function fetchSpeciesFolder(genus: string, epithet: string): Promise<ApiResult<SpeciesFolderResponse>> {
+  return apiRequest(`/species-folder/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}`, "GET", folderSchema);
+}
+export function createSpeciesFolder(genus: string, epithet: string): Promise<ApiResult<SpeciesFolderResponse>> {
+  return apiRequest(`/species-folder/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}`, "POST", folderSchema);
+}
+export function fetchLinkVisited(genus: string, epithet: string): Promise<ApiResult<LinkVisitedListResponse>> {
+  return apiRequest(`/link-visited/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}`, "GET", visitedListSchema);
+}
+export function postLinkVisited(genus: string, epithet: string, source: string): Promise<ApiResult<void>> {
+  return apiRequest(`/link-visited/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}/${encodeURIComponent(source)}`, "POST");
+}
+export function deleteLinkVisited(genus: string, epithet: string, source: string): Promise<ApiResult<void>> {
+  return apiRequest(`/link-visited/${encodeURIComponent(genus)}/${encodeURIComponent(epithet)}/${encodeURIComponent(source)}`, "DELETE");
 }
 
 // ---------------------------------------------------------------------------
