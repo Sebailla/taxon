@@ -119,4 +119,8 @@ The system SHALL make rows keyboard-navigable (Enter toggles caret, ArrowDown/Up
 - `Source` filter backend wiring (no-op first PR; multi-source in follow-up).
 - `species_count` materialization at deep nodes (lazy `null` >100k direct children).
 - Cross-reload persistence of expanded tree state.
+
+## Delta Applied
+
+- `subtree.md` — adds the `next_tiers` subtree envelope to `GET /api/tree/children?parent_id={id}` (one `NextTier` per cascade bucket below the parent — phylum / class / order / family / genus / species — with per-tier recursive rows, per-tier cursor pagination, and cascade-rank ordering). Applied by PR A.1 of the `tree-deep-subtree` change (issue #76).
 - The species list panel — the tree reaches a genus and delegates to the existing species fetch.
