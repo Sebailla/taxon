@@ -202,7 +202,7 @@ export function App(): JSX.Element {
               they are loading / ok / error. */}
           {resolved !== null && breadcrumbLinks.status === "idle" ? (
             <>
-              {links !== null ? <SpeciesLinks links={links} /> : null}
+              {links !== null ? <SpeciesLinks links={links} genus={resolved.canonical_name.split(/\s+/)[0]} epithet={resolved.canonical_name.split(/\s+/).slice(1).join(" ")} /> : null}
               {links === null && linksStatus === "loading" ? (
                 <p className="rounded-card border border-border bg-surface p-4 text-sm text-slate">
                   Loading links…
