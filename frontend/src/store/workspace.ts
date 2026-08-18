@@ -52,7 +52,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const result = enabled ? await deleteExplored(genus, epithet) : await postExplored(genus, epithet);
     if (result.status === "ok") set((state) => {
       const explored = new Set(state.explored);
-      enabled ? explored.delete(key) : explored.add(key);
+      if (enabled) explored.delete(key);
+      else explored.add(key);
       return { explored };
     });
   },
@@ -75,7 +76,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (result.status === "ok") set((state) => {
       const visitedLinks = new Map(state.visitedLinks);
       const sources = new Set(visitedLinks.get(key));
-      enabled ? sources.delete(source) : sources.add(source);
+      if (enabled) sources.delete(source);
+      else sources.add(source);
       visitedLinks.set(key, sources);
       return { visitedLinks };
     });
