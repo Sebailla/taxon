@@ -36,6 +36,7 @@ import { TAXON_SELECT_EVENT, parseTaxonSelectEvent } from "./events/taxonSelect"
 import { TaxonomicTree } from "./components/TaxonomicTree";
 import { SpeciesLinks } from "./components/SpeciesLinks";
 import { Breadcrumb } from "./components/Breadcrumb";
+import { ExplorerPanel } from "./components/ExplorerPanel";
 import { useCascadePath } from "./store/cascadePath";
 
 /** CustomEvent name the TaxonomicTree (and the legacy Cascade) emits
@@ -229,6 +230,14 @@ export function App(): JSX.Element {
               Could not load links: {breadcrumbLinks.detail}
             </p>
           ) : null}
+          {/* Embedded explorer panel. The panel reads the workspace
+              store's ``activeLink`` (set by SpeciesLinks species-cell
+              clicks) and renders the iframe + fallback card. The
+              sticky + top-0 keeps the embedded page visible while
+              the user scrolls the dispatch grid. */}
+          <div className="sticky top-0">
+            <ExplorerPanel />
+          </div>
         </aside>
       </div>
     </main>
