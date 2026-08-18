@@ -115,3 +115,29 @@ Cada uno ≤350 LOC. `auto-chain`: PR1 → PR2 → PR3.
 ## 10. Fuera de alcance
 
 Nube, multi-dispositivo, auth. Subespecies. Intercepción de `Content-Disposition`. Auto-marcado de visitado. Columna `taxa.is_explored`. Alembic. Página `.pen` (Pencil deshabilitado; el markdown + auditoría ES la superficie de diseño). `GET /api/link-visited/list` (solo hidratación por especie).
+
+## 11. Nota de implementación de Fase 4 (PR3)
+
+El diseño prescriptivo se convirtió en la siguiente superficie de código en el PR3 de #68 (ver `apply-progress-pr3-es.md` para el log de cierre completo):
+
+### 11.1 `ExplorerPanel.tsx`
+
+Renderiza el iframe + sandbox + tarjeta de respaldo + peek-card móvil + pill de enlace activo. Se suscribe a `workspaceStore.activeLink`. La tarjeta de respaldo se renderiza SOLO cuando el iframe dispara su evento `error` nativo (Wikipedia / Scholar / BHL envían `X-Frame-Options: SAMEORIGIN`); el iframe se oculta con `style={{ display: "none" }}` y el `<a target="_blank" rel="noopener noreferrer">Open in new tab</a>` toma su lugar. El ancla de respaldo es el primer tab stop dentro de la tarjeta para que el foco de teclado aterrice primero allí.
+
+### 11.2 Helper `decodeSpeciesKey`
+
+`frontend/src/store/speciesKey.ts` exporta el helper de round-trip para la clave URL-encoded `${genus}|${epithet}`. El store escribe `encodeURIComponent("${genus}|${epithet}")`; el panel lee de vuelta vía `decodeURIComponent` + `split("|")`. El helper se exporta desde un archivo separado porque la regla de lint `react-refresh/only-export-components` prohíbe mezclar exports de componentes y helpers en el mismo `.tsx`.
+
+### 11.3 Clic en celda de especie de `SpeciesLinks`
+
+El componente `SourceLink` ahora lee `setActiveLink` y despacha `{speciesKey: key, source: link.source, url: link.url}` en el clic cuando se conocen tanto `genus` como `epithet`. El panel de enlaces de breadcrumb (sin props de genus / epithet) NO muta `activeLink` porque `key` es `null` y la llamada a `setActiveLink` se omite. El comportamiento del anchor `target="_blank"` se preserva en ambas ramas.
+
+### 11.4 Montaje en `App.tsx`
+
+`<ExplorerPanel>` se monta dentro de la columna derecha, envuelto en un `<div className="sticky top-0">` para que la página embebida permanezca visible mientras el usuario desplaza la grilla de despacho. El montaje NO mueve el renderizado existente de `<Breadcrumb>` / `<SpeciesLinks>` — el panel es un slot aditivo debajo de ellos.
+
+### 11.5 Descubrimientos de TDD Estricto
+
+- jsdom + React 18.3 NO dispara el `onError` sintético de React en `<iframe>` mediante `fireEvent.error`. La implementación cambió a un `addEventListener('error', handler)` crudo en la ref del iframe, que coincide con lo que hacen los navegadores reales (el spec dice que el listener se asocia al elemento iframe crudo, no a la raíz de dispatch sintético).
+- El recorrido de iframes de axe-core falla en jsdom porque el iframe no tiene `contentDocument`. La prueba a11y para el estado de renderizado del iframe usa `axeCore.run(container, { iframes: false })` en vez del helper estándar `axe()`. Los estados vacío + fallback usan el helper estándar porque no tienen contenido de iframe en el que recursar.
+- 23 tests nuevos en 4 archivos pinean las 5 cláusulas MUST de `workspace-explorer/spec.md` (sandbox + estado vacío + cableado active-link + aislamiento breadcrumb + fallback + aria-label + peek móvil + axe-core). 135 tests pasan en total.

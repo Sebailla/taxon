@@ -115,3 +115,61 @@ Each ≤350 LOC. `auto-chain`: PR1 → PR2 → PR3.
 ## 10. Out of scope
 
 Cloud sync, multi-device, auth. Subspecies folder nesting. `Content-Disposition` interception. Auto-mark visited on click. `taxa.is_explored` column. Alembic dependency. `.pen` page (Pencil MCP disabled; markdown + audit IS the design surface). `GET /api/link-visited/list` (per-species hydrate only).
+
+## 11. Phase 4 (PR3) implementation note
+
+The prescriptive design became the following code surface in PR3 of #68
+(see `apply-progress-pr3.md` for the full closure log):
+
+### 11.1 `ExplorerPanel.tsx`
+
+Renders the iframe + sandbox + fallback card + mobile peek-card + active-link
+pill. Subscribes to `workspaceStore.activeLink`. The fallback card is rendered
+ONLY when the iframe fires its native `error` event (Wikipedia / Scholar / BHL
+all send `X-Frame-Options: SAMEORIGIN`); the iframe is hidden via
+`style={{ display: "none" }}` and the fallback `<a target="_blank" rel="noopener
+noreferrer">Open in new tab</a>` takes its place. The fallback anchor is the
+first tab stop inside the card so keyboard focus lands on it first.
+
+### 11.2 `decodeSpeciesKey` helper
+
+`frontend/src/store/speciesKey.ts` exports the round-trip helper for the
+URL-encoded `${genus}|${epithet}` key. The store writes
+`encodeURIComponent("${genus}|${epithet}")`; the panel reads back via
+`decodeURIComponent` + `split("|")`. The helper is exported from a separate
+file because the `react-refresh/only-export-components` lint rule forbids
+mixing component and helper exports in the same `.tsx` file.
+
+### 11.3 `SpeciesLinks` species-cell click
+
+The `SourceLink` component now reads `setActiveLink` and dispatches
+`{speciesKey: key, source: link.source, url: link.url}` on click when both
+`genus` and `epithet` are known. The breadcrumb-links panel (no genus / epithet
+props) does NOT mutate `activeLink` because the `key` is `null` and the
+`setActiveLink` call is skipped. The `target="_blank"` anchor behaviour is
+preserved in both branches.
+
+### 11.4 `App.tsx` mount
+
+`<ExplorerPanel>` is mounted inside the right column, wrapped in a
+`<div className="sticky top-0">` so the embedded page stays visible while the
+user scrolls the dispatch grid. The mount does NOT move the existing
+`<Breadcrumb>` / `<SpeciesLinks>` rendering — the panel is an additive slot
+below them.
+
+### 11.5 Strict TDD discoveries
+
+- jsdom + React 18.3 does NOT fire React's synthetic `onError` on `<iframe>`
+  via `fireEvent.error`. The implementation switched to a raw
+  `addEventListener('error', handler)` on the iframe ref, which matches what
+  real browsers do (the spec says the listener attaches at the raw iframe
+  element, not the synthetic dispatch root).
+- axe-core's iframe traversal crashes in jsdom because the iframe has no
+  `contentDocument`. The a11y test for the iframe-rendering state uses
+  `axeCore.run(container, { iframes: false })` instead of the standard `axe()`
+  helper. Empty + fallback states use the standard helper because they have no
+  iframe content to recurse into.
+- 23 new tests across 4 files pin the 5 MUST clauses from
+  `workspace-explorer/spec.md` (sandbox + empty state + active-link wiring +
+  breadcrumb isolation + fallback + aria-label + mobile peek + axe-core).
+  135 tests pass in total.
