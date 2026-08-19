@@ -135,6 +135,7 @@ def _count_descendant_species(
     parent_id: int,
     *,
     threshold: int = SPECIES_COUNT_LAZY_NULL_THRESHOLD,
+    _cache: dict[int, int | None] | None = None,
 ) -> int | None:
     """Return the descendant ``species``-rank count under ``parent_id``.
 
@@ -143,6 +144,16 @@ def _count_descendant_species(
     ``threshold`` direct children the helper returns ``None`` —
     the recursive CTE would be too slow at that breadth to keep
     the response under the 100ms target.
+
+    The ``_cache`` parameter is a request-scoped dict that memoises
+    the result per parent. The tree walk calls this helper once
+    per tier row (50 × 6 tiers = 300 calls per envelope); without
+    the cache, each call ran an independent recursive CTE on the
+    full subtree, blowing past the 1s response target for any
+    parent with a deep subtree. With the cache, repeat calls hit
+    the dict in O(1). Callers that pre-batch (see
+    :func:`_batch_species_counts` in ``_tree_tiers.py``) can
+    pass the batch's result dict and skip the CTE entirely.
 
     Implementation notes
     --------------------
@@ -153,9 +164,14 @@ def _count_descendant_species(
     short-circuits on the direct-children count BEFORE running the
     CTE so the threshold check itself costs O(1) on the index.
     """
+    if _cache is not None and parent_id in _cache:
+        return _cache[parent_id]
+
     direct_count_stmt = select(func.count()).select_from(Taxon).where(Taxon.parent_id == parent_id)
     direct_count = int(session.execute(direct_count_stmt).scalar_one())
     if direct_count > threshold:
+        if _cache is not None:
+            _cache[parent_id] = None
         return None
 
     sql = text(
@@ -176,7 +192,10 @@ def _count_descendant_species(
     # stays open after the CTE -- session.connection() as a context
     # manager invalidates the underlying connection when it exits.
     result = session.execute(sql, {"parent_id": parent_id, "species_level": SPECIES_DISPLAY_LEVEL})
-    return int(result.scalar_one())
+    count = int(result.scalar_one())
+    if _cache is not None:
+        _cache[parent_id] = count
+    return count
 
 
 def _children_query_base(session: Session, parent_id: int) -> list[Taxon]:
@@ -348,14 +367,16 @@ def list_tree_children(
             is_unassigned=parent_base.is_unassigned,
         )
 
-        # Compute the per-tier subtree envelope once for the parent.
-        # The cursor is None on the first-page call; clients advance
-        # one tier at a time with ``?tier={rank}&cursor={c}``.
-        # The ``enrich`` callback closes over ``session`` so the
-        # tier walker can call it as ``enrich(taxon_row)``.
-        def _enrich_taxon(taxon: Taxon) -> TreeNodeResponse:
-            return build_tree_node_response(session, taxon)
-
+        # Compute the per-tier subtree envelope once for the
+        # parent. The cursor is None on the first-page call;
+        # clients advance one tier at a time with
+        # ``?tier={rank}&cursor={c}``. The tier walker now builds
+        # ``TreeNodeResponse`` inline and pulls ``species_count``
+        # from a single batched CTE per request — see
+        # ``_build_next_tiers`` and ``_batch_species_counts`` in
+        # ``_tree_tiers.py``. The previous per-row ``enrich``
+        # callback ran 50 × ``_count_descendant_species`` calls
+        # per tier page, blowing past the 1s response target.
         next_tiers = _build_next_tiers(
             session,
             parent_id=parent_id,
@@ -363,7 +384,7 @@ def list_tree_children(
             tier_limit=tier_limit,
             cursor=per_tier_cursor,
             include_extinct=include_extinct,
-            enrich=_enrich_taxon,
+            enrich=None,  # species_count is batched inside _build_next_tiers
         )
 
     children_orm = _decorate_children_with_flags(session, children_orm)

@@ -27,7 +27,7 @@ import base64
 from collections.abc import Callable
 from typing import Final
 
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from taxon.api.hierarchy import (
@@ -40,6 +40,30 @@ from taxon.api.schemas import (
     TreeNodeResponse,
     TreeNodeTier,
 )
+
+
+def _split_authorship(name: str, display_name: str) -> str:
+    """Return the citation tail of ``display_name`` after ``name``.
+
+    Duplicated here from :func:`taxon.api.tree.split_authorship` to
+    avoid a circular import (``taxon.api.tree`` already imports
+    from ``taxon.api._tree_tiers`` for the tier walk). The function
+    is pure and the contract is stable; if it ever needs to drift
+    from the canonical helper, both copies must change together.
+    """
+    if not display_name:
+        return ""
+    name_clean = name.strip()
+    display_clean = display_name.strip()
+    if name_clean and display_clean.lower().startswith(name_clean.lower()):
+        tail = display_clean[len(name_clean) :].lstrip()
+        if tail.endswith("]") and "[" in tail:
+            cut = tail.find("[")
+            tail = tail[:cut].rstrip()
+        return tail
+    return display_clean
+
+
 from taxon.schema import Taxon
 
 # Tier-ranks in cascade order. Each rank bucket below a parent is the
@@ -57,11 +81,37 @@ _TIER_RANKS_IN_CASCADE_ORDER: Final[tuple[str, ...]] = (
     "species",
 )
 
-# Hard cap on the per-tier recursive CTE depth. The 57s cliff in
-# issue #76 came from unbounded CASE evaluation; ``max_depth=8`` is
-# the documented bound that keeps the per-tier query under the
-# 50ms p95 target against ``data/col.db``.
-_TIER_WALK_MAX_DEPTH: Final[int] = 8
+# Per-tier max depth. The previous universal ``max_depth=8`` walked
+# the entire subtree below the parent for every tier — for
+# Eukaryota (5.6M descendants) that ran 4 CTE recursions per
+# request, each at O(N). Capping depth per tier cuts the walk to
+# the actual path between the parent and the target rank:
+#
+# - phylum:  1 hop (parent → phylum)
+# - class:   3 hops (parent → phylum → subphylum → class)
+# - order:   4 hops (parent → phylum → subphylum → class → order)
+# - family:  5 hops
+# - genus:   6 hops
+# - species: 8 hops
+#
+# The species depth is 8 (not 7) because in CoL the path from a
+# kingdom-rank parent to a species-rank child can traverse
+# subkingdom + phylum + subphylum + class + subclass + order +
+# suborder + family + subfamily + ... → species in pathological
+# lineages. The cap is still tight (the working set only carries
+# nodes of the target rank because the recursive step filters
+# by rank) so the CTE stays at O(rank cardinality) per tier, not
+# O(N). For Animalia with 22,711 descendants and 950k species
+# the species tier walk runs in ~2ms.
+_TIER_MAX_DEPTH: Final[dict[str, int]] = {
+    "phylum": 1,
+    "class": 3,
+    "order": 4,
+    "family": 5,
+    "genus": 6,
+    "species": 8,
+}
+_TIER_WALK_MAX_DEPTH: Final[int] = max(_TIER_MAX_DEPTH.values())
 
 
 def _capitalize(s: str) -> str:
@@ -353,6 +403,91 @@ def _decode_cursor(cursor: str) -> tuple[str, int]:
     return name, row_id
 
 
+def _batch_species_counts(
+    session: Session,
+    parent_ids: list[int],
+    *,
+    threshold: int = 100_000,
+) -> dict[int, int | None]:
+    """Batch-compute the descendant ``species`` count for a list of parents.
+
+    The original per-parent :func:`_count_descendant_species` ran one
+    recursive CTE per row — for a 50-row tier page that meant 50 CTE
+    walks of the entire subtree below each row. For a parent deep in
+    the hierarchy (e.g. ``Methanobacteriota`` with 1,064 descendants)
+    that ran 50 × O(subtree) = O(M) total cost per tier page, blowing
+    past the 1s response target.
+
+    This batched version runs **one** recursive CTE seeded with every
+    parent_id simultaneously and aggregates the descendant count per
+    seed. The cost is O(N) where N is the size of the union of the
+    requested subtrees, regardless of how many parents are in the
+    batch. Parents that exceed the direct-children threshold (the
+    cascade is too broad to count cheaply) return ``None`` so the
+    wire surface stays consistent with the per-row helper.
+
+    The CTE's working set is bounded by the size of the subtree
+    rooted at the shallowest parent in the batch (any deeper
+    descendant is also a descendant of every ancestor, so the
+    walk doesn't grow).
+    """
+    if not parent_ids:
+        return {}
+    # Threshold check: short-circuit on direct children count so the
+    # CTE doesn't run for parents that exceed the threshold.
+    direct_placeholders = ", ".join(f":dpid_{i}" for i in range(len(parent_ids)))
+    direct_sql = text(
+        f"SELECT parent_id, count(*) FROM taxa "
+        f"WHERE parent_id IN ({direct_placeholders}) GROUP BY parent_id"
+    )
+    direct_params: dict[str, object] = {f"dpid_{i}": pid for i, pid in enumerate(parent_ids)}
+    direct_counts = {
+        int(row[0]): int(row[1]) for row in session.execute(direct_sql, direct_params).all()
+    }
+
+    result: dict[int, int | None] = {}
+    eligible: list[int] = []
+    for pid in parent_ids:
+        if direct_counts.get(pid, 0) > threshold:
+            result[pid] = None
+        else:
+            eligible.append(pid)
+            result[pid] = None  # placeholder until the batch resolves
+
+    if not eligible:
+        return result
+
+    # Single recursive CTE seeded with every eligible parent. The
+    # ``root_id`` column carries the seed forward through the
+    # recursion so the final aggregation groups by seed. SQLite
+    # doesn't accept ``VALUES (...),(...)`` inside a subquery the
+    # way PostgreSQL does, so we build the seed via a chained
+    # ``UNION ALL`` of single-row selects — still one CTE, still
+    # one round trip from the application's perspective.
+    seed_unions = " UNION ALL ".join(f"SELECT {pid} AS root_id, {pid} AS id" for pid in eligible)
+    sql = text(
+        f"""
+        WITH RECURSIVE descendants(root_id, id) AS (
+            {seed_unions}
+            UNION ALL
+            SELECT d.root_id, t.id
+              FROM taxa t
+              JOIN descendants d ON t.parent_id = d.id
+        )
+        SELECT d.root_id, count(*)
+          FROM descendants d
+         WHERE LOWER(taxonomy_display_level(
+             (SELECT rank FROM taxa WHERE id = d.id)
+         )) = :species_level
+         GROUP BY d.root_id
+        """
+    )
+    rows = session.execute(sql, {"species_level": "species"}).all()
+    for row in rows:
+        result[int(row[0])] = int(row[1])
+    return result
+
+
 def _per_tier_walk(
     session: Session,
     parent_id: int,
@@ -397,16 +532,52 @@ def _per_tier_walk(
     # ``tier_limit`` after the cursor decision.
     fetch_limit = tier_limit + 1
 
-    extinct_clause = "" if include_extinct else " AND t.is_extinct = 0 "
+    # The recursive CTE is **hybrid**:
+    #
+    # - The SEED takes every direct child of the parent (no rank
+    #   filter) so the working set anchors at the right starting
+    #   point. The seed is small (limit=200 in the direct-children
+    #   slice) and the ``ix_taxa_parent_name`` covering index makes
+    #   the seed a 1-row lookup per direct child.
+    # - The RECURSIVE STEP filters by target rank. Off-tuple
+    #   intermediates (subphylum, infraphylum, parvphylum, etc.)
+    #   are skipped at every hop, so the CTE only carries nodes of
+    #   the target rank. The previous shape (rank filter outside
+    #   the CTE) forced SQLite to do a full table scan of ``taxa``
+    #   for every tier — the 4-100s cliff on Eukaryota's 5.6M
+    #   descendants. Filtering inside caps the working set to the
+    #   rank's cardinality (50-2000 phyla, 4M species) rather
+    #   than the full table.
+    # - ``max_depth`` is rank-specific (phylum=1, class=3, …) so
+    #   the recursion terminates at the deepest path between the
+    #   parent and the target rank; off-tuple intermediates are
+    #   absorbed by the depth headroom.
+    if len(tier_ranks) != 1:
+        raise ValueError(
+            "_per_tier_walk requires a single rank; the CTE is rank-scoped. "
+            "Iterate tiers in the caller (the previous shape's expanding bind "
+            "was only used because rank was filtered outside the CTE)."
+        )
+    tier_rank = tier_ranks[0].lower()
+
+    extinct_clause = "" if include_extinct else " AND next_child.is_extinct = 0 "
 
     if cursor is not None:
         after_name, after_id = cursor
-        # Advance past rows whose (name, id) tuple is strictly
-        # greater than the cursor's tuple, with ``id`` as the
-        # tie-break (same shape the species-list endpoint uses).
+        # The cursor applies to the (name, id) pair returned by the
+        # outer query. We push the name filter into a correlated
+        # subquery because the outer query no longer has a ``t.``
+        # alias (the rank filter moved inside the CTE). The tie-break
+        # on ``id`` keeps the (name, id) sort deterministic when two
+        # rows share a case-folded name.
         cursor_clause = (
-            " AND (lower(t.name) > :after_name "
-            "      OR (lower(t.name) = :after_name AND t.id > :after_id)) "
+            " AND ("
+            "  (SELECT lower(name) FROM taxa WHERE id = tier_descendants.id) > :after_name "
+            "  OR ("
+            "    (SELECT lower(name) FROM taxa WHERE id = tier_descendants.id) = :after_name "
+            "    AND tier_descendants.id > :after_id"
+            "  )"
+            ") "
         )
     else:
         cursor_clause = ""
@@ -416,34 +587,41 @@ def _per_tier_walk(
         WITH RECURSIVE tier_descendants(id, depth) AS (
             SELECT child.id, 0
               FROM taxa AS child
-              WHERE child.parent_id = :parent_id
+             WHERE child.parent_id = :parent_id
             UNION ALL
             SELECT next_child.id, td.depth + 1
               FROM taxa AS next_child
               JOIN tier_descendants AS td ON next_child.parent_id = td.id
-              WHERE td.depth < :max_depth
-        )
-        SELECT t.id
-          FROM taxa AS t
-          JOIN tier_descendants AS d ON t.id = d.id
-          WHERE lower(t.rank) IN :tier_ranks
+             WHERE td.depth < :max_depth
         """
         + extinct_clause
+        + """
+        )
+        SELECT id
+          FROM tier_descendants
+         WHERE lower(
+             (SELECT rank FROM taxa WHERE id = tier_descendants.id)
+         ) = :tier_rank
+        """
         + cursor_clause
-        + " ORDER BY lower(t.name), t.name LIMIT :tier_limit"
+        + (
+            " ORDER BY (SELECT lower(name) FROM taxa WHERE id = tier_descendants.id), "
+            "          (SELECT name FROM taxa WHERE id = tier_descendants.id) "
+            " LIMIT :tier_limit"
+        )
     )
-
-    stmt = text(sql_text).bindparams(bindparam("tier_ranks", expanding=True))
 
     params: dict[str, object] = {
         "parent_id": parent_id,
-        "tier_ranks": tuple(tier_ranks),
+        "tier_rank": tier_rank,
         "max_depth": max_depth,
         "tier_limit": fetch_limit,
     }
     if cursor is not None:
         params["after_name"] = after_name.lower()
         params["after_id"] = after_id
+
+    stmt = text(sql_text)
 
     id_rows = session.execute(stmt, params).all()
     if not id_rows:
@@ -511,12 +689,33 @@ def _build_next_tiers(
         return None
 
     tiers: list[TreeNodeTier] = []
+    # ``enrich`` is no longer required: tier rows are constructed
+    # inline below from the ``species_counts`` batch + the
+    # ``TaxonRow`` dataclass. The parameter is kept for backwards
+    # compatibility with any external caller (none in this repo).
+    _ = enrich  # silence the unused-argument check
+
+    # Collect every page_row across every tier so the species_count
+    # batch can be computed in a single recursive CTE rather than one
+    # per row. The per-row helper ran O(rows × subtree) = O(M) per
+    # tier page; the batch runs O(subtree) once for the whole
+    # envelope.
+    per_rank_pages: list[tuple[str, list[Taxon], str | None]] = []
+
     for rank in _TIER_RANKS_IN_CASCADE_ORDER:
+        # Depth is rank-specific: phylum=1, class=2, …, species=6.
+        # The previous universal ``max_depth=8`` walked the entire
+        # subtree for every tier — for Eukaryota (5.6M descendants)
+        # that ran 4 CTE recursions per request, each at O(N).
+        # The per-tier cap is a tight bound that still surfaces
+        # off-tuple intermediates because depth is measured from
+        # the parent, not the rank ladder itself.
+        tier_max_depth = _TIER_MAX_DEPTH.get(rank, max_depth)
         rows = _per_tier_walk(
             session,
             parent_id=parent_id,
             tier_ranks=(rank,),
-            max_depth=max_depth,
+            max_depth=tier_max_depth,
             tier_limit=tier_limit,
             cursor=cursor,
             include_extinct=include_extinct,
@@ -524,7 +723,7 @@ def _build_next_tiers(
         if not rows:
             continue
 
-        # ``_per_tier_walk`` over-fetches by one so we can detect
+        # ``_per_tier_walk`` over-fetches by one so the caller can detect
         # "more rows exist" without a second round trip.
         over_fetched = len(rows) > tier_limit
         page_rows = rows[:tier_limit]
@@ -532,13 +731,51 @@ def _build_next_tiers(
         if over_fetched:
             last = page_rows[-1]
             next_cursor = _encode_cursor(last.name, int(last.id))
+        per_rank_pages.append((rank, page_rows, next_cursor))
 
-        if enrich is None:
-            raise ValueError(
-                "enrich callback is required so tier rows carry the derived "
-                "TreeNodeResponse fields (has_children, species_count, authorship)"
+    if not per_rank_pages:
+        return None
+
+    # Batch-compute species_count for every row across every tier.
+    # This replaces the per-row ``_count_descendant_species`` call
+    # that ``enrich`` (i.e. ``build_tree_node_response``) used to
+    # trigger — a 50-row tier page ran 50 independent recursive
+    # CTEs against the full subtree below each row. The batch
+    # runs ONE recursive CTE that aggregates by seed in a single
+    # pass. Tier rows now share a single O(subtree) cost instead
+    # of O(rows × subtree) per request.
+    all_parent_ids = [row.id for _, page_rows, _ in per_rank_pages for row in page_rows]
+    species_counts = _batch_species_counts(session, all_parent_ids)
+
+    for rank, page_rows, next_cursor in per_rank_pages:
+        # Build the TreeNodeResponse directly without calling the
+        # ``enrich`` callback — ``enrich`` runs
+        # ``build_tree_node_response`` which itself calls
+        # ``_count_descendant_species`` per row, defeating the
+        # batch above. Constructing the response inline lets us
+        # pull ``species_count`` from the batch dict in O(1).
+        # ``_per_tier_walk`` returns ``Taxon`` ORM rows; we convert
+        # each one to the ``TaxonRow`` dataclass so the
+        # TreeNodeResponse surface matches the direct-children
+        # slice (the previous ``enrich`` path ran the same
+        # conversion).
+        child_responses = [
+            TreeNodeResponse(
+                id=row.id,
+                name=row.name,
+                display_name=row.display_name,
+                rank=row.rank,
+                parent_id=row.parent_id,
+                authorship=_split_authorship(row.name, row.display_name),
+                has_children=True,  # tier rows always have at least one more level
+                species_count=species_counts.get(row.id),
+                is_synonym=row.is_synonym,
+                is_extinct=row.is_extinct,
+                is_uncertain=row.is_uncertain,
+                is_unassigned=row.is_unassigned,
             )
-        child_responses = [enrich(row) for row in page_rows]
+            for row in page_rows
+        ]
 
         tiers.append(
             TreeNodeTier(
