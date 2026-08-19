@@ -46,6 +46,23 @@ def _tables(db_path: Path) -> set[str]:
         }
 
 
+def _indexes(db_path: Path, table: str = "taxa") -> set[str]:
+    """Return the set of index names attached to ``table`` in the SQLite database.
+
+    Uses ``sqlite_master`` filtered by ``tbl_name`` so the assertion targets
+    index identity, not column shape (CREATE INDEX statements may include
+    ``UNIQUE`` or sort-order qualifiers that vary across SQLAlchemy versions).
+    """
+    with sqlite3.connect(db_path) as conn:
+        return {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?",
+                (table,),
+            ).fetchall()
+        }
+
+
 def _run(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Invoke ``python -m taxon.migrate`` with ``argv``.
 
@@ -175,3 +192,172 @@ def test_reads_taxon_database_url_env(tmp_path: Path, env_with_pythonpath: dict[
     completed = _run(["dry-run"], env)
     assert completed.returncode == 1, f"dry-run must exit 1; stderr={completed.stderr!r}"
     assert "species_explored" in completed.stdout
+
+
+# ---------------------------------------------------------------------------
+# ix_taxa_parent_rank_name composite index migration
+# ---------------------------------------------------------------------------
+#
+# PR A.2 of #76 introduces a composite index on ``taxa(parent_id, rank, name)``
+# to accelerate the per-tier recursive CTE used by ``/api/tree/children``.
+# The migration is idempotent (``CREATE INDEX IF NOT EXISTS``) so the
+# standalone ``taxon.migrate`` script must keep that contract.
+
+
+def test_migrate_creates_parent_rank_name_index(
+    tmp_path: Path, env_with_pythonpath: dict[str, str]
+) -> None:
+    """``apply`` creates the composite ``ix_taxa_parent_rank_name`` index and is idempotent.
+
+    Pre-condition: pre-seed a ``taxa`` table with a few rows so the index
+    has data to attach to. Drop the index if it already exists (defensive),
+    run ``apply``, assert the index now exists; run ``apply`` again and
+    assert the index still exists.
+    """
+    db = _fresh_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE taxa ("
+            "id INTEGER PRIMARY KEY, "
+            "parent_id INTEGER, "
+            "rank TEXT NOT NULL, "
+            "name TEXT NOT NULL, "
+            "display_name TEXT NOT NULL, "
+            "display_level TEXT, "
+            "source_id TEXT NOT NULL UNIQUE, "
+            "is_synonym INTEGER NOT NULL DEFAULT 0, "
+            "is_extinct INTEGER NOT NULL DEFAULT 0, "
+            "is_uncertain INTEGER NOT NULL DEFAULT 0, "
+            "is_unassigned INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        # Seed a few rows so the index has data to attach to.
+        conn.executemany(
+            "INSERT INTO taxa (id, parent_id, rank, name, display_name, source_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (1, None, "kingdom", "Animalia", "Animalia", "worms:1"),
+                (2, 1, "phylum", "Chordata", "Chordata", "worms:2"),
+                (3, 2, "class", "Mammalia", "Mammalia", "worms:3"),
+            ],
+        )
+        # Defensive: drop the index if it pre-exists.
+        conn.execute("DROP INDEX IF EXISTS ix_taxa_parent_rank_name")
+        conn.commit()
+
+    first = _run(["apply", "--database-url", f"sqlite:///{db}"], env_with_pythonpath)
+    assert first.returncode == 0, f"apply must exit 0; stderr={first.stderr!r}"
+
+    indexes = _indexes(db, "taxa")
+    assert "ix_taxa_parent_rank_name" in indexes, (
+        f"apply must create ix_taxa_parent_rank_name; got {indexes!r}"
+    )
+
+    # Idempotency: a second apply must NOT raise and the index must remain.
+    second = _run(["apply", "--database-url", f"sqlite:///{db}"], env_with_pythonpath)
+    assert second.returncode == 0, (
+        f"second apply must be idempotent; stderr={second.stderr!r}"
+    )
+    assert "ix_taxa_parent_rank_name" in _indexes(db, "taxa"), (
+        "second apply must preserve ix_taxa_parent_rank_name"
+    )
+
+
+def test_migrate_skips_index_if_present(
+    tmp_path: Path, env_with_pythonpath: dict[str, str]
+) -> None:
+    """``apply`` is a no-op for the index when it already exists.
+
+    Pre-create ``taxa`` AND the index, then run ``apply`` and confirm:
+
+    - exit code 0
+    - the pre-existing index is still present
+    - the row count is preserved (no destructive operations)
+    """
+    db = _fresh_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE taxa ("
+            "id INTEGER PRIMARY KEY, "
+            "parent_id INTEGER, "
+            "rank TEXT NOT NULL, "
+            "name TEXT NOT NULL, "
+            "display_name TEXT NOT NULL, "
+            "display_level TEXT, "
+            "source_id TEXT NOT NULL UNIQUE, "
+            "is_synonym INTEGER NOT NULL DEFAULT 0, "
+            "is_extinct INTEGER NOT NULL DEFAULT 0, "
+            "is_uncertain INTEGER NOT NULL DEFAULT 0, "
+            "is_unassigned INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        conn.execute(
+            "INSERT INTO taxa (id, parent_id, rank, name, display_name, source_id) "
+            "VALUES (1, NULL, 'kingdom', 'Animalia', 'Animalia', 'worms:1')"
+        )
+        conn.execute("CREATE INDEX ix_taxa_parent_rank_name ON taxa (parent_id, rank, name)")
+        conn.commit()
+
+    completed = _run(["apply", "--database-url", f"sqlite:///{db}"], env_with_pythonpath)
+    assert completed.returncode == 0, f"apply must exit 0; stderr={completed.stderr!r}"
+    assert "ix_taxa_parent_rank_name" in _indexes(db, "taxa"), (
+        "pre-existing index must remain after apply"
+    )
+    with sqlite3.connect(db) as conn:
+        row_count = conn.execute("SELECT COUNT(*) FROM taxa").fetchone()[0]
+    assert row_count == 1, "apply must not delete rows from taxa"
+
+
+def test_migrate_preserves_existing_indexes(
+    tmp_path: Path, env_with_pythonpath: dict[str, str]
+) -> None:
+    """``apply`` must NOT drop the three pre-existing ``taxa`` indexes when adding the new one.
+
+    Pre-seed ``taxa`` with rows AND the three prior indexes
+    (``ix_taxa_parent_name``, ``ix_taxa_rank``, ``ix_taxa_display_level``).
+    Run ``apply`` and confirm the four indexes coexist afterwards.
+    """
+    db = _fresh_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE taxa ("
+            "id INTEGER PRIMARY KEY, "
+            "parent_id INTEGER, "
+            "rank TEXT NOT NULL, "
+            "name TEXT NOT NULL, "
+            "display_name TEXT NOT NULL, "
+            "display_level TEXT, "
+            "source_id TEXT NOT NULL UNIQUE, "
+            "is_synonym INTEGER NOT NULL DEFAULT 0, "
+            "is_extinct INTEGER NOT NULL DEFAULT 0, "
+            "is_uncertain INTEGER NOT NULL DEFAULT 0, "
+            "is_unassigned INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        conn.executemany(
+            "INSERT INTO taxa (id, parent_id, rank, name, display_name, source_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (1, None, "kingdom", "Animalia", "Animalia", "worms:1"),
+                (2, 1, "phylum", "Chordata", "Chordata", "worms:2"),
+            ],
+        )
+        conn.execute("CREATE INDEX ix_taxa_parent_name ON taxa (parent_id, name)")
+        conn.execute("CREATE INDEX ix_taxa_rank ON taxa (rank)")
+        conn.execute("CREATE INDEX ix_taxa_display_level ON taxa (display_level)")
+        conn.commit()
+
+    completed = _run(["apply", "--database-url", f"sqlite:///{db}"], env_with_pythonpath)
+    assert completed.returncode == 0, f"apply must exit 0; stderr={completed.stderr!r}"
+
+    indexes = _indexes(db, "taxa")
+    # The three pre-existing indexes must remain untouched.
+    assert "ix_taxa_parent_name" in indexes, "ix_taxa_parent_name must survive"
+    assert "ix_taxa_rank" in indexes, "ix_taxa_rank must survive"
+    assert "ix_taxa_display_level" in indexes, "ix_taxa_display_level must survive"
+    # The new index must be present too.
+    assert "ix_taxa_parent_rank_name" in indexes, "ix_taxa_parent_rank_name must be added"
+    # Row count must remain.
+    with sqlite3.connect(db) as conn:
+        row_count = conn.execute("SELECT COUNT(*) FROM taxa").fetchone()[0]
+    assert row_count == 2, "apply must not delete rows"
