@@ -255,9 +255,7 @@ def test_migrate_creates_parent_rank_name_index(
 
     # Idempotency: a second apply must NOT raise and the index must remain.
     second = _run(["apply", "--database-url", f"sqlite:///{db}"], env_with_pythonpath)
-    assert second.returncode == 0, (
-        f"second apply must be idempotent; stderr={second.stderr!r}"
-    )
+    assert second.returncode == 0, f"second apply must be idempotent; stderr={second.stderr!r}"
     assert "ix_taxa_parent_rank_name" in _indexes(db, "taxa"), (
         "second apply must preserve ix_taxa_parent_rank_name"
     )
