@@ -122,17 +122,17 @@ PR A.2 lands as 3 commits, ~150 LOC.
 
 ### Work unit 2 — store gains `nextTiers` + `tierRowsByKey` + `loadMore`
 
-- [ ] 2.1 `frontend/src/store/taxonomicTree.ts` adds `nextTiersByParentId: Map<number, TreeNodeTier[]>` and `tierRowsByKey: Map<string, { rows: TreeNodeResponse[]; nextCursor: string | null }>` (key `${parentId}:${rank}`).
-- [ ] 2.2 New `loadMore(parentId, rank)` action: calls `fetchTierPage`, appends rows to `tierRowsByKey`, updates the `nextCursor`.
-- [ ] 2.3 `setIncludeExtinct` invalidation also nukes `nextTiersByParentId` + `tierRowsByKey` (same discipline as `childrenByParentId`).
-- [ ] 2.4 Commit: `feat(tree-store): add next_tiers cache + loadMore action`.
+- [x] 2.1 `frontend/src/store/taxonomicTree.ts` adds `nextTiersByParentId: Map<number, TreeNodeTier[]>` and `tierRowsByKey: Map<string, { rows: TreeNodeResponse[]; nextCursor: string | null }>` (key `${parentId}:${rank}`). (#C.1)
+- [x] 2.2 New `loadMore(parentId, rank)` action: calls `fetchTierPage`, appends rows to `tierRowsByKey`, updates the `nextCursor`. (#C.1)
+- [x] 2.3 `setIncludeExtinct` invalidation also nukes `nextTiersByParentId` + `tierRowsByKey` (same discipline as `childrenByParentId`). (#C.1)
+- [x] 2.4 Commit: `feat(tree-store): add next_tiers cache + loadMore action`. (#C.1)
 
 ### Work unit 3 — `api.ts` widens + `fetchTierPage`
 
-- [ ] 3.1 `frontend/src/api.ts::TreeChildrenResponse` widens to include `next_tiers: TreeNodeTier[] | null`; new `TreeNodeTier` interface mirrors the backend.
-- [ ] 3.2 `fetchTierPage(parentId, tier, cursor, { tierLimit = 50, signal? })` calls `/api/tree/children?parent_id=...&tier=...&cursor=...&tier_limit=...&limit=...`; returns the tier page payload.
-- [ ] 3.3 `buildTreeChildrenUrl` accepts `tier` + `cursor` query params.
-- [ ] 3.4 Commit: `feat(api): add fetchTierPage helper + widen TreeChildrenResponse type`.
+- [x] 3.1 `frontend/src/api.ts::TreeChildrenResponse` widens to include `next_tiers: TreeNodeTier[] | null`; new `TreeNodeTier` interface mirrors the backend. (#C.1)
+- [x] 3.2 `fetchTierPage(parentId, tier, cursor, { tierLimit = 50, signal? })` calls `/api/tree/children?parent_id=...&tier=...&cursor=...&tier_limit=...&limit=...`; returns the tier page payload. (#C.1)
+- [x] 3.3 `buildTreeChildrenUrl` accepts `tier` + `cursor` query params. (#C.1)
+- [x] 3.4 Commit: `feat(api): add fetchTierPage helper + widen TreeChildrenResponse type`. (#C.1)
 
 ### Work unit 4 — `<TierGroup>` component + `walk()` integration
 

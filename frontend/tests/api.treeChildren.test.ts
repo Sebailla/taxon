@@ -110,6 +110,7 @@ const ROOTS_PAYLOAD: TreeChildrenResponse = {
     authorship: "",
   },
   children: [ARCHAEA, BACTERIA, EUKARYOTA],
+  next_tiers: null,
   next_cursor: null,
 };
 

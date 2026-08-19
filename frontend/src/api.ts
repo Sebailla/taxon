@@ -136,16 +136,43 @@ export interface TreeNodeResponse extends TaxonResponse {
 }
 
 /**
+ * One cascade tier below the parent in
+ * ``GET /api/tree/children?parent_id={id}``.
+ *
+ * Mirrors the backend's ``TreeNodeTier`` in ``taxon/api/schemas.py``.
+ * The frontend renders one tier group per :attr:`rank`; the rows
+ * arrive paginated inside :attr:`children`, capped at the requested
+ * ``tier_limit``. :attr:`next_cursor` is non-empty when more rows
+ * exist so :func:`fetchTierPage` can advance.
+ */
+export interface TreeNodeTier {
+  rank: string;
+  label: string;
+  examples: string[];
+  children: TreeNodeResponse[];
+  next_cursor: string | null;
+}
+
+/**
  * Envelope of ``GET /api/tree/children?parent_id=N``.
  *
  * Mirrors the backend's ``TreeChildrenResponse``: the parent
  * (the taxon the request resolved to) + the direct children +
  * an opaque ``next_cursor`` (always ``null`` for the first PR; the
  * 200-row cap fits in a single page).
+ *
+ * ``next_tiers`` is additive — older clients see ``null`` and keep
+ * working. When the parent has non-direct descendants at multiple
+ * ranks, the backend returns one :class:`TreeNodeTier` per bucket
+ * (phylum / class / order / family / genus / species). The frontend
+ * renders one tier group per entry; each tier carries its own
+ * paginated ``children`` + ``next_cursor`` so the load-more can
+ * advance per tier independently.
  */
 export interface TreeChildrenResponse {
   parent: TreeNodeResponse;
   children: TreeNodeResponse[];
+  next_tiers: TreeNodeTier[] | null;
   next_cursor: string | null;
 }
 
@@ -515,11 +542,11 @@ export const TREE_SEARCH_DEFAULT_LIMIT = 8;
  * Build the URL for ``GET /api/tree/children`` with the agreed
  * query-string order.
  *
- * The order is fixed (``parent_id``, ``limit``, ``include_extinct``)
- * so a snapshot test can pin the exact wire format. The function
- * is exported because the TaxonomicTree uses it inline when the
- * ``Extant only`` checkbox toggles, and the test suite asserts the
- * shape without going through ``fetch``.
+ * The canonical order is ``parent_id``, ``limit``, ``include_extinct``,
+ * then the optional ``tier`` + ``cursor`` pair (when paginating
+ * per-tier rows). The function is exported because both the
+ * tree component and the store cache use it inline; the test suite
+ * pins the exact wire shape without going through ``fetch``.
  *
  * The returned path is RELATIVE (no ``/api`` prefix) because the
  * ``apiGet`` helper prepends ``/api`` before issuing the request.
@@ -531,6 +558,9 @@ export function buildTreeChildrenUrl(args: {
   parentId: number;
   limit?: number;
   includeExtinct?: boolean;
+  tier?: string;
+  cursor?: string | null;
+  tierLimit?: number;
 }): string {
   const params = new URLSearchParams();
   params.set("parent_id", String(args.parentId));
@@ -538,7 +568,51 @@ export function buildTreeChildrenUrl(args: {
   if (args.includeExtinct === false) {
     params.set("include_extinct", "false");
   }
+  if (args.tier !== undefined) {
+    params.set("tier", args.tier);
+  }
+  if (args.cursor !== undefined && args.cursor !== null) {
+    params.set("cursor", args.cursor);
+  }
+  if (args.tierLimit !== undefined) {
+    params.set("tier_limit", String(args.tierLimit));
+  }
   return `/tree/children?${params.toString()}`;
+}
+
+/**
+ * Fetch the paginated page for a single tier below a parent.
+ *
+ * Routes through ``/api/tree/children?parent_id=...&tier=...&cursor=...&tier_limit=...``.
+ * The backend narrows the ``next_tiers`` envelope to the single
+ * tier the client asked for and returns its children slice + the
+ * next opaque cursor (or ``null`` at the last page). The component
+ * uses this with ``cursor = null`` on the first expand and with the
+ * cached cursor on every subsequent :func:`loadMore` call.
+ *
+ * ``parentId = 0`` is the documented sentinel for the root list
+ * (rows with ``parent_id IS NULL``); the backend translates it to
+ * the IS-NULL query.
+ *
+ * The ``tier_limit`` query param is always present (defaulted to 50
+ * here so the URL the store builds is fully determined — the
+ * backend clamps above 200 silently and rejects below 1 with 4xx).
+ */
+export const FETCH_TIER_PAGE_DEFAULT_LIMIT = 50;
+
+export async function fetchTierPage(
+  parentId: number,
+  tier: string,
+  cursor: string | null,
+  init?: { signal?: AbortSignal; tierLimit?: number },
+): Promise<ApiResult<TreeChildrenResponse>> {
+  const url = buildTreeChildrenUrl({
+    parentId,
+    tier,
+    cursor: cursor ?? "",
+    tierLimit: init?.tierLimit ?? FETCH_TIER_PAGE_DEFAULT_LIMIT,
+  });
+  return apiGet<TreeChildrenResponse>(url, init);
 }
 
 /**
