@@ -9,7 +9,6 @@ compatibility with callers that imported them from ``taxon.api``.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -24,15 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
+from taxon.api.database_url import DEFAULT_DATABASE_URL, resolve_database_url
 from taxon.api.errors import AmbiguousError, APIError, NotFoundError
 from taxon.api.router import router as api_router
 from taxon.api.schemas import AmbiguityCandidate, ErrorResponse, HealthResponse
 from taxon.taxonomy import display_level
 
-# Default on-disk location for the SQLite database produced by ``import_data``.
-# Lives next to ``pyproject.toml`` so a single ``python -m taxon.main`` invocation
-# finds the imported dataset without any extra config.
-DEFAULT_DATABASE_URL = "sqlite:///./data/taxon.db"
 _DATA_DIR = Path("data")
 
 
@@ -49,19 +45,17 @@ class AppState:
 
 
 def _resolve_database_url(database_url: str | None) -> str:
-    """Resolve the database URL and ensure the on-disk parent directory exists.
+    """Resolve the effective database URL.
 
-    SQLite file URLs (``sqlite:///./data/taxon.db``) need the ``./data``
-    directory to exist before the engine tries to open the file. We only
-    touch the filesystem for ``sqlite`` URLs — non-sqlite URLs (memory,
-    Postgres, etc.) are passed through untouched.
+    Delegates to :func:`taxon.api.database_url.resolve_database_url`,
+    which adds the on-disk parent directory creation and the
+    ``col.db`` → ``taxon.db`` fallback when the primary default is
+    missing on disk. The ``_DATA_DIR`` mkdir for in-memory URLs is
+    preserved here so a later swap to a file-backed URL finds the
+    directory ready.
     """
-    resolved = database_url or os.environ.get("TAXON_DATABASE_URL") or DEFAULT_DATABASE_URL
-    if resolved.startswith("sqlite:///") and not resolved.startswith("sqlite:///:memory:"):
-        path_part = resolved[len("sqlite:///") :]
-        if path_part and path_part != ":memory:":
-            Path(path_part).expanduser().parent.mkdir(parents=True, exist_ok=True)
-    elif resolved == "sqlite:///:memory:":
+    resolved = resolve_database_url(database_url)
+    if resolved == "sqlite:///:memory:":
         # In-memory SQLite still needs the data dir if the user later swaps
         # the URL — keep the directory present so the swap is seamless.
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
