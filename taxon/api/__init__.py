@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from taxon.api.database_url import DEFAULT_DATABASE_URL, resolve_database_url
 from taxon.api.errors import AmbiguousError, APIError, NotFoundError
+from taxon.api.projections import PROJECTION_TABLES
 from taxon.api.router import router as api_router
 from taxon.api.schemas import AmbiguityCandidate, ErrorResponse, HealthResponse
 from taxon.taxonomy import display_level
@@ -142,17 +143,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         Base.metadata.create_all(engine)
     else:
-        # File-backed SQLite: bootstrap ONLY the workspace tables
-        # (species_explored, species_folders, link_visited) so a fresh
-        # ``data/taxon.db`` boots the species-folder-explorer endpoint
-        # surface without an out-of-band ``python -m taxon.migrate``
+        # File-backed SQLite: bootstrap the workspace tables AND the
+        # projection tables so a fresh ``data/taxon.db`` boots with the
+        # species-folder-explorer AND the descendant-counts projection
+        # surfaces without an out-of-band ``python -m taxon.migrate``
         # step. ``Base.metadata.create_all`` is idempotent — pre-existing
         # tables (``taxa``, ``species_paths``) are left alone.
         from taxon.api.workspace import WORKSPACE_TABLES
         from taxon.schema import Base
 
-        workspace_table_objs = [Base.metadata.tables[name] for name in WORKSPACE_TABLES]
-        Base.metadata.create_all(engine, tables=workspace_table_objs)
+        managed_table_objs = [
+            Base.metadata.tables[name] for name in (*WORKSPACE_TABLES, *PROJECTION_TABLES)
+        ]
+        Base.metadata.create_all(engine, tables=managed_table_objs)
 
     try:
         yield
