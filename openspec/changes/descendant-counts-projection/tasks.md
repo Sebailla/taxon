@@ -51,10 +51,10 @@ Chain strategy: pending
 
 **Files**: `taxon/api/projections.py` (new module — empty skeleton), `taxon/api/workspace.py` (NOT modified).
 **Acceptance**:
-- [ ] `taxon/api/projections.py` exists with a single exported constant `PROJECTION_TABLES: tuple[str, ...] = ("taxon_descendant_counts",)`.
-- [ ] `PROJECTION_TABLES` is importable as `from taxon.api.projections import PROJECTION_TABLES`.
-- [ ] A stub `register_display_level(engine: Engine) -> None` is exported. It attaches the SQLite user function `taxonomy_display_level(rank)` to every new connection via `@event.listens_for(engine, "connect")`, mirroring the FastAPI factory's listener at `taxon/api/__init__.py:92-95`. Body delegates to `taxon.taxonomy.display_level`.
-- [ ] Importing the module has no side effects (no engine creation, no DB I/O).
+- [x] `taxon/api/projections.py` exists with a single exported constant `PROJECTION_TABLES: tuple[str, ...] = ("taxon_descendant_counts",)`.
+- [x] `PROJECTION_TABLES` is importable as `from taxon.api.projections import PROJECTION_TABLES`.
+- [x] A stub `register_display_level(engine: Engine) -> None` is exported. It attaches the SQLite user function `taxonomy_display_level(rank)` to every new connection via `@event.listens_for(engine, "connect")`, mirroring the FastAPI factory's listener at `taxon/api/__init__.py:92-95`. Body delegates to `taxon.taxonomy.display_level`.
+- [x] Importing the module has no side effects (no engine creation, no DB I/O).
 **Tests**: RED-first in a new `taxon/tests/test_descendant_counts_projection.py` (full file at PR #2 — for this commit, only the bare-engine registration test exists as `test_register_display_level_attaches_function_to_bare_engine` — see task 6).
 **Notes**:
 - Conventional commit: `feat(projections): add PROJECTION_TABLES tuple + register_display_level helper`.
@@ -67,10 +67,10 @@ Chain strategy: pending
 
 **Files**: `taxon/migrate.py`, `taxon/tests/test_migrate.py`.
 **Acceptance**:
-- [ ] `taxon/migrate.py::main` passes `WORKSPACE_TABLES + PROJECTION_TABLES` to `_run_apply` (so plain `apply` creates `taxon_descendant_counts` alongside the three workspace tables).
-- [ ] `WORKSPACE_TABLES` itself is UNCHANGED — its docstring pins its meaning to the three re-import-surviving workspace tables (`taxon/api/workspace.py:43-50`); we widen the apply call site, NOT the constant.
-- [ ] The CLI engine at `taxon/migrate.py:233` calls `register_display_level(engine)` after `create_engine(...)` so the recursive CTE works out-of-band.
-- [ ] The CLI does NOT yet gain an `apply-projection` subcommand — that lands in task 5.
+- [x] `taxon/migrate.py::main` passes `WORKSPACE_TABLES + PROJECTION_TABLES` to `_run_apply` (so plain `apply` creates `taxon_descendant_counts` alongside the three workspace tables).
+- [x] `WORKSPACE_TABLES` itself is UNCHANGED — its docstring pins its meaning to the three re-import-surviving workspace tables (`taxon/api/workspace.py:43-50`); we widen the apply call site, NOT the constant.
+- [x] The CLI engine at `taxon/migrate.py:233` calls `register_display_level(engine)` after `create_engine(...)` so the recursive CTE works out-of-band.
+- [x] The CLI does NOT yet gain an `apply-projection` subcommand — that lands in task 5.
 **Tests**: `taxon/tests/test_migrate.py` — RED-first update: `test_apply_creates_three_new_tables` is renamed to `test_apply_creates_all_migrated_tables` and now also asserts `taxon_descendant_counts` in the result set; add `test_apply_creates_taxon_descendant_counts_on_fresh_db` (single-table pin, the spec's `Fresh DB gains the table on apply` scenario). `pytest taxon/tests/test_migrate.py -v`.
 **Notes**:
 - Conventional commit: `feat(migrate): include PROJECTION_TABLES in apply + register display_level on CLI engine`.
@@ -83,9 +83,9 @@ Chain strategy: pending
 
 **Files**: `taxon/tests/test_migrate.py`.
 **Acceptance**:
-- [ ] `test_apply_projection_exits_zero_on_empty_db` — RED: `python -m taxon.migrate apply-projection --database-url sqlite:///...` against an empty DB exits non-zero (currently the subcommand does not exist → argparse error → non-zero exit). Test pins the contract.
-- [ ] `test_apply_projection_respects_threshold_flag` — RED: pass `--threshold=1` against a populated DB; argparse should accept the flag. Currently fails because the flag is unrecognised.
-- [ ] `test_apply_projection_is_idempotent_via_cli` — RED: invoking twice exits zero both times. Fails because the subcommand does not exist.
+- [x] `test_apply_projection_exits_zero_on_empty_db` — RED: `python -m taxon.migrate apply-projection --database-url sqlite:///...` against an empty DB exits non-zero (currently the subcommand does not exist → argparse error → non-zero exit). Test pins the contract.
+- [x] `test_apply_projection_respects_threshold_flag` — RED: pass `--threshold=1` against a populated DB; argparse should accept the flag. Currently fails because the flag is unrecognised.
+- [x] `test_apply_projection_is_idempotent_via_cli` — RED: invoking twice exits zero both times. Fails because the subcommand does not exist.
 **Tests**: All three are RED at this commit. `pytest taxon/tests/test_migrate.py -v` shows them failing with the expected argparse / exit-code errors.
 **Notes**:
 - Conventional commit: `test(migrate): pin apply-projection CLI contract (RED)`.
@@ -96,11 +96,11 @@ Chain strategy: pending
 
 **Files**: `taxon/migrate.py`, `taxon/tests/test_migrate.py`.
 **Acceptance**:
-- [ ] `python -m taxon.migrate apply-projection --database-url sqlite:///...` exits 0 on a populated DB and on an empty DB.
-- [ ] The subparser accepts `--threshold INT` (default `SPECIES_COUNT_LAZY_NULL_THRESHOLD`); the value narrows the population (only parents whose `direct_children_count` exceeds the value get rows).
-- [ ] The subparser accepts `--budget-seconds FLOAT` (default `None` — disables the SLO guard for offline callers; see ADR-2 in `design.md:60-82`).
-- [ ] The three RED tests from task 4 now pass GREEN.
-- [ ] The subcommand calls `register_display_level(engine)` (idempotent re-registration is acceptable; only one of the three callers actually needs the call — keep the call site explicit for clarity).
+- [x] `python -m taxon.migrate apply-projection --database-url sqlite:///...` exits 0 on a populated DB and on an empty DB.
+- [x] The subparser accepts `--threshold INT` (default `SPECIES_COUNT_LAZY_NULL_THRESHOLD`); the value narrows the population (only parents whose `direct_children_count` exceeds the value get rows).
+- [x] The subparser accepts `--budget-seconds FLOAT` (default `None` — disables the SLO guard for offline callers; see ADR-2 in `design.md:60-82`).
+- [x] The three RED tests from task 4 now pass GREEN.
+- [x] The subcommand calls `register_display_level(engine)` (idempotent re-registration is acceptable; only one of the three callers actually needs the call — keep the call site explicit for clarity).
 **Tests**: `taxon/tests/test_migrate.py` — the three RED tests from task 4 now pass. Also add `test_apply_projection_creates_taxa_table_on_empty_db_for_cte` to confirm the subcommand can run an in-memory CTE against the freshly-created `taxa` table (no data — just exercises the SQL plumbing).
 **Notes**:
 - Conventional commit: `feat(migrate): add apply-projection subcommand + --threshold/--budget-seconds flags`.
@@ -112,9 +112,9 @@ Chain strategy: pending
 
 **Files**: `taxon/tests/test_descendant_counts_projection.py` (new file).
 **Acceptance**:
-- [ ] `test_register_display_level_attaches_function_to_bare_engine` — create a bare `create_engine("sqlite:///:memory:")` (NO listener), then call `register_display_level(engine)`. Open a connection and run `SELECT taxonomy_display_level('species')` — must return `"species"`.
-- [ ] `test_register_display_level_is_idempotent` — calling `register_display_level(engine)` twice on the same engine does not raise.
-- [ ] `test_register_display_level_fails_on_unregistered_engine` — a bare engine without the registration throws `OperationalError: no such function: taxonomy_display_level` when the CTE is run. Pins the gap.
+- [x] `test_register_display_level_attaches_function_to_bare_engine` — create a bare `create_engine("sqlite:///:memory:")` (NO listener), then call `register_display_level(engine)`. Open a connection and run `SELECT taxonomy_display_level('species')` — must return `"species"`.
+- [x] `test_register_display_level_is_idempotent` — calling `register_display_level(engine)` twice on the same engine does not raise.
+- [x] `test_register_display_level_fails_on_unregistered_engine` — a bare engine without the registration throws `OperationalError: no such function: taxonomy_display_level` when the CTE is run. Pins the gap.
 **Tests**: All three are the seed of the new test file. `pytest taxon/tests/test_descendant_counts_projection.py -v`.
 **Notes**:
 - Conventional commit: `test(projections): pin register_display_level on bare engine`.
@@ -134,11 +134,11 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/projections.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] `lookup_one(session, taxon_id) -> int | None` returns the cached `species_count` or `None` on a miss.
-- [ ] `lookup_one` catches `OperationalError: no such table: taxon_descendant_counts` and returns `None` — the legacy-DB scenario (spec §Schema Adds Without Touching Legacy Databases).
-- [ ] `lookup_many(session, taxon_ids) -> dict[int, int]` runs ONE `IN`-list `SELECT`; absent ids are simply missing from the dict; empty input returns `{}` without a round trip.
-- [ ] `_table_exists(session, name) -> bool` returns `False` for a missing table (used by the read path on legacy DBs).
-- [ ] No session mutation — both helpers are pure reads.
+- [x] `lookup_one(session, taxon_id) -> int | None` returns the cached `species_count` or `None` on a miss.
+- [x] `lookup_one` catches `OperationalError: no such table: taxon_descendant_counts` and returns `None` — the legacy-DB scenario (spec §Schema Adds Without Touching Legacy Databases).
+- [x] `lookup_many(session, taxon_ids) -> dict[int, int]` runs ONE `IN`-list `SELECT`; absent ids are simply missing from the dict; empty input returns `{}` without a round trip.
+- [x] `_table_exists(session, name) -> bool` returns `False` for a missing table (used by the read path on legacy DBs).
+- [x] No session mutation — both helpers are pure reads.
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_lookup_one_returns_none_when_table_absent` (legacy DB — use a fresh in-memory engine without `create_all`).
 - `test_lookup_one_returns_cached_value_after_write` (write a row, look it up).
@@ -155,10 +155,10 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/projections.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] `_projected_parent_ids(session, threshold) -> list[int]` returns every taxon id whose `direct_children_count` exceeds `threshold`.
-- [ ] Threshold constant is imported from `taxon.api.tree.SPECIES_COUNT_LAZY_NULL_THRESHOLD` — single source of truth (spec §Population Rule).
-- [ ] Empty result returns `[]` (no error).
-- [ ] The query is `SELECT parent_id FROM taxa WHERE parent_id IS NOT NULL GROUP BY parent_id HAVING count(*) > :threshold` — bound parameter, never interpolated.
+- [x] `_projected_parent_ids(session, threshold) -> list[int]` returns every taxon id whose `direct_children_count` exceeds `threshold`.
+- [x] Threshold constant is imported from `taxon.api.tree.SPECIES_COUNT_LAZY_NULL_THRESHOLD` — single source of truth (spec §Population Rule).
+- [x] Empty result returns `[]` (no error).
+- [x] The query is `SELECT parent_id FROM taxa WHERE parent_id IS NOT NULL GROUP BY parent_id HAVING count(*) > :threshold` — bound parameter, never interpolated.
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_projected_parent_ids_returns_only_above_threshold` (build a fixture with 3 parents: 5 children, 100 children, 1000 children; with threshold=50 → only the last one).
 - `test_projected_parent_ids_skips_root_with_null_parent_id` (a root taxon whose `parent_id IS NULL` is never a "parent" for this projection).
@@ -172,12 +172,12 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/projections.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] `materialize_for_parent(session, parent_id, *, budget_seconds=REBUILD_BUDGET_SECONDS) -> int | None` rebuilds the row for `parent_id` and returns `species_count`.
-- [ ] Uses `time.perf_counter()` to measure the CTE walk elapsed time (ADR-2: measure, don't predict).
-- [ ] Under budget (`elapsed <= budget_seconds`): INSERT the row, `session.commit()`, return `species_count`.
-- [ ] Over budget: `session.rollback()`, NO row written, return `None` — the pre-change answer.
-- [ ] Idempotent: re-running on an existing row upserts on the PK (no duplicate, no accumulation).
-- [ ] `REBUILD_BUDGET_SECONDS: Final[float] = 1.0` — matches the `/api/tree/children` 1s SLO documented at `taxon/api/tree.py:67-69`.
+- [x] `materialize_for_parent(session, parent_id, *, budget_seconds=REBUILD_BUDGET_SECONDS) -> int | None` rebuilds the row for `parent_id` and returns `species_count`.
+- [x] Uses `time.perf_counter()` to measure the CTE walk elapsed time (ADR-2: measure, don't predict).
+- [x] Under budget (`elapsed <= budget_seconds`): INSERT the row, `session.commit()`, return `species_count`.
+- [x] Over budget: `session.rollback()`, NO row written, return `None` — the pre-change answer.
+- [x] Idempotent: re-running on an existing row upserts on the PK (no duplicate, no accumulation).
+- [x] `REBUILD_BUDGET_SECONDS: Final[float] = 1.0` — matches the `/api/tree/children` 1s SLO documented at `taxon/api/tree.py:67-69`.
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_rebuild_under_budget_writes_row` (small fixture, default budget → row exists after the call; `computed_at` is recent).
 - `test_rebuild_over_budget_skips_write_and_returns_none` (inject `budget_seconds=0.0` to force the over-budget branch deterministically — no sleeps, no flaky timing. Assert `None` returned AND no row in the table).
@@ -193,10 +193,10 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/projections.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] `materialize_all(session, threshold=SPECIES_COUNT_LAZY_NULL_THRESHOLD, *, budget_seconds=None) -> int` rebuilds every row for every projected parent and returns the number of rows written.
-- [ ] Iterates `_projected_parent_ids(session, threshold)` and calls `materialize_for_parent` per parent.
-- [ ] `budget_seconds=None` (the default) DISABLES the SLO guard for offline callers — `apply-projection` and `import_data` are not serving a request and must complete the population (spec §Rebuild Bounded by the Per-Request SLO is scoped to the tree endpoint).
-- [ ] The whole batch runs in one transaction (single `session.commit()` at the end) so a partial failure rolls back.
+- [x] `materialize_all(session, threshold=SPECIES_COUNT_LAZY_NULL_THRESHOLD, *, budget_seconds=None) -> int` rebuilds every row for every projected parent and returns the number of rows written.
+- [x] Iterates `_projected_parent_ids(session, threshold)` and calls `materialize_for_parent` per parent.
+- [x] `budget_seconds=None` (the default) DISABLES the SLO guard for offline callers — `apply-projection` and `import_data` are not serving a request and must complete the population (spec §Rebuild Bounded by the Per-Request SLO is scoped to the tree endpoint).
+- [x] The whole batch runs in one transaction (single `session.commit()` at the end) so a partial failure rolls back.
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_materialize_all_populates_only_above_threshold_parents` (3 parents — 5, 100, 1000 children; threshold=50 → 1 row written, returns 1).
 - `test_materialize_all_is_idempotent` (call twice; row count unchanged, values for `species_count` + `total_count` do not change).
@@ -212,10 +212,10 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/projections.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] The three CLI tests from PR #1 task 4 (`test_apply_projection_exits_zero_on_empty_db`, `test_apply_projection_respects_threshold_flag`, `test_apply_projection_is_idempotent_via_cli`) now exit zero AND populate rows (when threshold is hit) via the real `materialize_all`.
-- [ ] `test_apply_projection_runs_the_cte_on_a_bare_engine` (the bare-engine test from PR #1 task 6) now exercises `materialize_all` end-to-end against a bare CLI engine — confirms the `taxonomy_display_level` registration gap is closed.
-- [ ] `pytest taxon/tests/test_migrate.py taxon/tests/test_descendant_counts_projection.py -v` → all green.
-- [ ] `pytest taxon/tests/test_species_count_lazy_null.py -v` → unchanged, still green (no regression in the pre-change path).
+- [x] The three CLI tests from PR #1 task 4 (`test_apply_projection_exits_zero_on_empty_db`, `test_apply_projection_respects_threshold_flag`, `test_apply_projection_is_idempotent_via_cli`) now exit zero AND populate rows (when threshold is hit) via the real `materialize_all`.
+- [x] `test_apply_projection_runs_the_cte_on_a_bare_engine` (the bare-engine test from PR #1 task 6) now exercises `materialize_all` end-to-end against a bare CLI engine — confirms the `taxonomy_display_level` registration gap is closed.
+- [x] `pytest taxon/tests/test_migrate.py taxon/tests/test_descendant_counts_projection.py -v` → all green.
+- [x] `pytest taxon/tests/test_species_count_lazy_null.py -v` → unchanged, still green (no regression in the pre-change path).
 **Tests**: All RED tests from tasks 7-10 now pass GREEN. The two CLI tests that were stubbed in PR #1 (task 5) now exercise the real implementation.
 **Notes**:
 - Conventional commit: `feat(projections): wire materialize_all into apply-projection CLI`.
@@ -234,11 +234,11 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/tree.py`, `taxon/tests/test_api_router_tree.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] `_count_descendant_species` consults `lookup_one(session, parent_id)` immediately after the `_cache` request-scoped short-circuit (after line 190 of `tree.py`), BEFORE the `direct_count > threshold` guard (line 198).
-- [ ] Cache hit: return `cached` directly, populate `_cache[parent_id]` for the request scope, skip the threshold guard AND the CTE.
-- [ ] Cache miss: fall through to existing threshold + CTE path unchanged. If the threshold branch fires, call `materialize_for_parent(session, parent_id)` and return its result (`None` when over budget, `int` when under).
-- [ ] The second threshold guard at `tree.py:236-239` (total_count > threshold) gets the same treatment — instead of re-walking, the helper writes the already-known `(species_count, total_count)` through a small `_persist_cached_count(session, parent_id, species_count, total_count, elapsed) -> None` that honours the same SLO budget.
-- [ ] Regression: `pytest taxon/tests/test_species_count_lazy_null.py -v` → unchanged, still green.
+- [x] `_count_descendant_species` consults `lookup_one(session, parent_id)` immediately after the `_cache` request-scoped short-circuit (after line 190 of `tree.py`), BEFORE the `direct_count > threshold` guard (line 198).
+- [x] Cache hit: return `cached` directly, populate `_cache[parent_id]` for the request scope, skip the threshold guard AND the CTE.
+- [x] Cache miss: fall through to existing threshold + CTE path unchanged. If the threshold branch fires, call `materialize_for_parent(session, parent_id)` and return its result (`None` when over budget, `int` when under).
+- [x] The second threshold guard at `tree.py:236-239` (total_count > threshold) gets the same treatment — instead of re-walking, the helper writes the already-known `(species_count, total_count)` through a small `_persist_cached_count(session, parent_id, species_count, total_count, elapsed) -> None` that honours the same SLO budget.
+- [x] Regression: `pytest taxon/tests/test_species_count_lazy_null.py -v` → unchanged, still green.
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_cache_hit_returns_without_running_cte` (pre-insert a row in `taxon_descendant_counts`; monkeypatch `session.execute` to count CTE invocations; assert zero).
 - `test_cache_hit_skips_threshold_guard` (parent whose `direct_count > SPECIES_COUNT_LAZY_NULL_THRESHOLD` but has a cached row → returns the cached value, no `None`).
@@ -255,11 +255,11 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/api/_tree_tiers.py`, `taxon/tests/test_descendant_counts_projection.py`.
 **Acceptance**:
-- [ ] `_batch_species_counts` calls `lookup_many(session, parent_ids)` immediately after the `direct_counts` read at `_tree_tiers.py:446`.
-- [ ] Cached ids are written into `result` and EXCLUDED from `eligible` so they contribute no seed row to the recursive CTE.
-- [ ] The CTE text at `_tree_tiers.py:467-485` is byte-identical to the pre-change version (no SQL rewrite, no new join).
-- [ ] The aggregation loop at lines 486-487 only writes into ids that were seeded — structurally enforcing "cached stale row wins over CTE".
-- [ ] Regression: the batch tier tests in `taxon/tests/test_api_router_tree.py` stay green unchanged.
+- [x] `_batch_species_counts` calls `lookup_many(session, parent_ids)` immediately after the `direct_counts` read at `_tree_tiers.py:446`.
+- [x] Cached ids are written into `result` and EXCLUDED from `eligible` so they contribute no seed row to the recursive CTE.
+- [x] The CTE text at `_tree_tiers.py:467-485` is byte-identical to the pre-change version (no SQL rewrite, no new join).
+- [x] The aggregation loop at lines 486-487 only writes into ids that were seeded — structurally enforcing "cached stale row wins over CTE".
+- [x] Regression: the batch tier tests in `taxon/tests/test_api_router_tree.py` stay green unchanged.
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_batch_merges_cached_and_cte_counts` (mixed batch: 1 cached + 3 sub-threshold → result carries cached value for the cached id + CTE value for the others).
 - `test_batch_excludes_cached_ids_from_cte_seed` (capture the generated seed SQL; assert cached id is absent from `UNION ALL`).
@@ -274,10 +274,10 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/import_data.py`, `taxon/tests/test_import.py` (or `test_descendant_counts_projection.py`).
 **Acceptance**:
-- [ ] `_sqlite_engine` (line 75) calls `register_display_level(engine)` BEFORE the existing `enable_foreign_keys` listener so the function is registered on every new connection.
-- [ ] `import_dataset` calls `materialize_all` after `_populate_species_paths(engine)` (line 71) and BEFORE the `return counts` (line 72). The call uses a fresh `Session(engine)` so the offline batch path is independent of any caller-held session.
-- [ ] A small fixture (`test_rebuild_after_import_dataset_populates_threshold_parents`) builds a dataset where one parent exceeds the threshold; after `import_dataset` returns, the row is present with a fresh `computed_at`.
-- [ ] Regression: `pytest taxon/tests/test_import.py -v` → unchanged green (the existing tests do not assert on `taxon_descendant_counts`).
+- [x] `_sqlite_engine` (line 75) calls `register_display_level(engine)` BEFORE the existing `enable_foreign_keys` listener so the function is registered on every new connection.
+- [x] `import_dataset` calls `materialize_all` after `_populate_species_paths(engine)` (line 71) and BEFORE the `return counts` (line 72). The call uses a fresh `Session(engine)` so the offline batch path is independent of any caller-held session.
+- [x] A small fixture (`test_rebuild_after_import_dataset_populates_threshold_parents`) builds a dataset where one parent exceeds the threshold; after `import_dataset` returns, the row is present with a fresh `computed_at`.
+- [x] Regression: `pytest taxon/tests/test_import.py -v` → unchanged green (the existing tests do not assert on `taxon_descendant_counts`).
 **Tests**: RED-first in `taxon/tests/test_descendant_counts_projection.py`:
 - `test_import_dataset_triggers_rebuild` (synthetic fixture, threshold-exceeding parent → row present after the call).
 - `test_import_dataset_rebuild_is_idempotent` (call `import_dataset` twice on the same source; row count + values unchanged).
@@ -292,9 +292,9 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `openspec/specs/taxonomic-tree-browse/spec.md`.
 **Acceptance**:
-- [ ] The line `species_count materialization at deep nodes` is removed from the `Out of Scope` section (the line exists at the bottom of the file; check with `rg "species_count materialization" openspec/specs/`).
-- [ ] The delta spec at `openspec/changes/descendant-counts-projection/specs/taxonomic-tree-browse/spec.md` already records the superseded requirement — no edit to the delta spec needed.
-- [ ] `git diff openspec/specs/taxonomic-tree-browse/spec.md` shows only the deletion.
+- [x] The line `species_count materialization at deep nodes` is removed from the `Out of Scope` section (the line exists at the bottom of the file; check with `rg "species_count materialization" openspec/specs/`).
+- [x] The delta spec at `openspec/changes/descendant-counts-projection/specs/taxonomic-tree-browse/spec.md` already records the superseded requirement — no edit to the delta spec needed.
+- [x] `git diff openspec/specs/taxonomic-tree-browse/spec.md` shows only the deletion.
 **Tests**: None — doc-only.
 **Notes**:
 - Conventional commit: `docs(specs): prune superseded Out-of-Scope line for projection`.
@@ -305,12 +305,12 @@ PR #1 closes with 6 work-unit commits (1 + 2 + 6 + 3 + 4 + 5), ~270 LOC total. T
 
 **Files**: `taxon/tests/test_species_count_lazy_null.py` (no edits — guard).
 **Acceptance**:
-- [ ] `pytest taxon/tests/ -v` → all green on `develop`.
-- [ ] `pytest taxon/tests/test_species_count_lazy_null.py -v` → unchanged green (regression guard for the pre-change behaviour).
-- [ ] `mypy taxon/` → zero errors.
-- [ ] `ruff check taxon/` → zero errors.
-- [ ] Runtime harness: `uvicorn taxon.api:create_app --reload` against `data/col.db`; `curl "/api/tree/children?parent_id={animalia_id}"` → `species_count` is a non-null integer (was `null` pre-change). Second call → identical value, no CTE log line.
-- [ ] Runtime harness: `python -m taxon.import_data` on `data/taxon.db` rebuilds the projection; subsequent `apply-projection` is a no-op (row count unchanged).
+- [x] `pytest taxon/tests/ -v` → all green on `develop`.
+- [x] `pytest taxon/tests/test_species_count_lazy_null.py -v` → unchanged green (regression guard for the pre-change behaviour).
+- [x] `mypy taxon/` → zero errors.
+- [x] `ruff check taxon/` → zero errors.
+- [x] Runtime harness: `uvicorn taxon.api:create_app --reload` against `data/col.db`; `curl "/api/tree/children?parent_id={animalia_id}"` → `species_count` is a non-null integer (was `null` pre-change). Second call → identical value, no CTE log line.
+- [x] Runtime harness: `python -m taxon.import_data` on `data/taxon.db` rebuilds the projection; subsequent `apply-projection` is a no-op (row count unchanged).
 **Tests**: The harness commands above.
 **Notes**:
 - Conventional commit: `test(tree): verify species_count cache integration (regression guard)`.
@@ -322,8 +322,8 @@ PR #3 closes with 5 commits (12 + 13 + 14 + 15 + 16), ~135 LOC total. Well under
 
 ### 17. `learn-es` entry (after PR #3 green on `develop`)
 
-- [ ] 17.1 Write `/learn-es/2026-08-19-descendant-counts-projection.md` per AGENTS.md §2 structure (What / How / Where / Why / How it works / Workflows) in neutral/professional Spanish. Trigger: PR #3 merges green to `develop`.
-- [ ] 17.2 Conventional commit: `docs(learn-es): entry for descendant-counts-projection change`.
+- [x] 17.1 Write `/learn-es/2026-08-19-descendant-counts-projection.md` per AGENTS.md §2 structure (What / How / Where / Why / How it works / Workflows) in neutral/professional Spanish. Trigger: PR #3 merges green to `develop`.
+- [x] 17.2 Conventional commit: `docs(learn-es): entry for descendant-counts-projection change`.
 
 ## Critical Path
 
