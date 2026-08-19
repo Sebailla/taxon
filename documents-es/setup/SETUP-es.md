@@ -1,8 +1,10 @@
 # SETUP — Cómo levantar el sistema
 
-> **Alcance**: instrucciones para levantar Taxon (backend FastAPI + frontend React) en local desde cero en macOS, Linux o WSL. Cubre los dos modos de operación: una **demo rápida** con la base ya poblada en `data/taxon.db`, y la **carga completa** desde el dataset WoRMS original.
+> **Alcance**: instrucciones para levantar Taxon (backend FastAPI + frontend React) en local desde cero en macOS, Linux o WSL. Cubre los dos modos de operación: una **demo rápida** con la base ya poblada en `data/taxon.db`, y la **carga completa** desde el dataset original.
 >
 > **Audiencia**: developer técnicas/os que clonan el repo y necesitan el sistema corriendo en menos de 10 minutos.
+>
+> **Convención de fuentes**: el **importador** parsea el dataset **WoRMS** (`dataset-2011.txt` — World Register of Marine Species) y vuelca la jerarquía completa a SQLite. El **árbol que ve el usuario en pantalla** es **CoL** (Catalogue of Life) — 5 roots: Eukaryota, Archaea, Bacteria, Viruses, incertae sedis. La base `data/taxon.db` contiene ambas jerarquías fusionadas; la UI siempre muestra los 5 roots CoL.
 
 ## Prerrequisitos
 
@@ -14,9 +16,9 @@
 | git | 2.30+ | `git --version` |
 | Compilador C mínimo | cualquiera (para `pysqlite` si es necesario) | `gcc --version` o `clang --version` |
 
-**Para la carga completa desde WoRMS** (opcional, ya viene demo poblada en `data/taxon.db`):
+**Para la carga completa desde el dataset original** (opcional, ya viene demo poblada en `data/taxon.db`):
 
-- Dataset WoRMS `dataset-2011.txt` (~1.39M líneas). No se incluye en el repo por tamaño. Bájalo desde el sitio oficial de WoRMS o úsalo desde tu copia local.
+- Dataset **WoRMS** `dataset-2011.txt` (~1.39M líneas, World Register of Marine Species). No se incluye en el repo por tamaño. Bájalo desde el sitio oficial de WoRMS (https://www.marinespecies.org/) o úsalo desde tu copia local. La importación se hace con `python -m taxon.import_data`.
 
 ## 1. Clonar el repo
 
@@ -55,7 +57,7 @@ export TAXON_DATABASE_URL="sqlite:///./data/taxon.db"
 
 **B. Carga completa — importar el dataset WoRMS original**
 
-Si querés partir de cero o actualizar la base:
+Si querés partir de cero o actualizar la base, importá el dataset WoRMS:
 
 ```bash
 # 1. Bajar dataset-2011.txt (no incluido en el repo) a algún path
@@ -66,6 +68,8 @@ ls /path/to/dataset-2011.txt
 #                 database=data/taxon.db
 python -m taxon.import_data --source /path/to/dataset-2011.txt --database ./data/taxon.db
 ```
+
+La base resultante contiene tanto la jerarquía WoRMS (padres del cascade) como la jerarquía CoL (los 5 roots que ve la UI). La UI siempre muestra CoL.
 
 **3. Aplicar migraciones** (idempotente — crea las 3 tablas del workspace + asegura el índice compuesto `ix_taxa_parent_rank_name`):
 
@@ -100,7 +104,7 @@ curl http://127.0.0.1:8000/api/_meta
 # → {"phase": "2B"}
 ```
 
-Probá navegar el árbol taxonómico:
+Probá navegar el árbol taxonómico (siempre CoL — 5 roots):
 
 ```bash
 # Roots de la cascada (5 CoL kingdoms)
@@ -138,7 +142,7 @@ El bundle compilado vive en `frontend/dist/`. El backend FastAPI lo sirve en pro
 | Variable | Default | Descripción |
 |----------|---------|-------------|
 | `TAXON_DATABASE_URL` | `sqlite:///./data/taxon.db` | URL de SQLAlchemy. Acepta `sqlite:///:memory:` para tests. |
-| `TAXON_DATASET` | `/Users/sebailla/Developer/research/worm/dataset-2011.txt` | Ruta al dataset WoRMS para el importador. |
+| `TAXON_DATASET` | `/Users/sebailla/Developer/research/worm/dataset-2011.txt` | Ruta al dataset WoRMS para el importador. La UI siempre muestra los 5 roots CoL; el dataset WoRMS provee los descendientes. |
 | `TAXON_DATABASE` | `data/taxon.db` | DB path para el CLI `taxon.import_data`. |
 | `AQUALIFE_ROOT` | `/` | Root del filesystem para `species_folders` (workspace per-species). Solo relevante si usás el workspace. |
 
@@ -298,7 +302,7 @@ taxon/
 │   ├── tailwind.config.js # Design tokens
 │   └── vite.config.ts     # Dev server with /api proxy
 ├── data/                  # Pre-poblada en el repo
-│   ├── taxon.db           # SQLite con WoRMS 2011
+│   ├── taxon.db           # SQLite con WoRMS 2011 + jerarquía CoL (5 roots)
 │   └── col.db             # Cache CoL adicional
 ├── docs/                  # Documentación en inglés
 │   ├── design/
