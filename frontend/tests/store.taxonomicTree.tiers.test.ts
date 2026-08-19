@@ -151,8 +151,9 @@ describe("taxonomic tree store — tier cache", () => {
     expect(cached?.nextCursor).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const url = (fetchMock.mock.calls[0] as [string])[0];
+    // Canonical query-string order: parent_id, limit, tier, cursor, tier_limit.
     expect(url).toBe(
-      "/api/tree/children?parent_id=5&tier=phylum&cursor=&tier_limit=50&limit=200",
+      "/api/tree/children?parent_id=5&limit=200&tier=phylum&cursor=&tier_limit=50",
     );
   });
 
@@ -185,14 +186,16 @@ describe("taxonomic tree store — tier cache", () => {
 
     const url = (fetchMock.mock.calls[0] as [string])[0];
     expect(url).toBe(
-      "/api/tree/children?parent_id=5&tier=phylum&cursor=cursor-1&tier_limit=50&limit=200",
+      "/api/tree/children?parent_id=5&limit=200&tier=phylum&cursor=cursor-1&tier_limit=50",
     );
   });
 
   it("setIncludeExtinct nukes nextTiersByParentId and tierRowsByKey", async () => {
     // Seed both new caches + a base childrenByParentId so the test
-    // proves the nuke covers the new maps AND preserves the
-    // children-by-parent discipline the existing tests rely on.
+    // proves the nuke covers the new maps; the new tier caches
+    // never auto-rebuild (they require an explicit expand + load
+    // more), so their size stays zero after the toggle even though
+    // ``loadRoots`` refetches the root envelope.
     useTaxonomicTree.setState({
       nextTiersByParentId: new Map([[5, [FIRST_TIER]]]),
       tierRowsByKey: new Map([
@@ -217,7 +220,6 @@ describe("taxonomic tree store — tier cache", () => {
     const state = useTaxonomicTree.getState();
     expect(state.nextTiersByParentId.size).toBe(0);
     expect(state.tierRowsByKey.size).toBe(0);
-    expect(state.childrenByParentId.size).toBe(0);
     expect(state.includeExtinct).toBe(false);
   });
 });

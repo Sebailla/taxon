@@ -10,6 +10,13 @@ State:
 
 - ``childrenByParentId`` — ``Map<parentId, TreeNodeResponse[]>``.
   The cache. Missing entries mean "fetch on first expand".
+- ``nextTiersByParentId`` — ``Map<parentId, TreeNodeTier[]>`` seeded
+  from the ``next_tiers`` envelope of the direct-children fetch.
+  Missing entries mean "no tiers below the parent (true leaf)";
+  the component renders nothing.
+- ``tierRowsByKey`` — ``Map<key, {rows, nextCursor}>`` carrying the
+  paginated rows for each ``(parentId, rank)`` pair. Keyed by
+  ``"${parentId}:${rank}"`` so a parent's tier rows never collide.
 - ``expandedIds`` — ``Set<id>`` of currently expanded rows. The
   component reads this to decide which rows to render and
   dispatches ``toggleExpand(id)`` to mutate.
@@ -28,6 +35,8 @@ Actions:
 - ``ensureChildren(parentId)`` — fetches and caches the children
   of a parent if the cache misses; idempotent on a cache hit.
 - ``toggleExpand(id)`` — flips the expanded flag for ``id``.
+- ``loadMore(parentId, rank)`` — calls :func:`fetchTierPage` for the
+  cached tier slice and appends rows to ``tierRowsByKey``.
 - ``setError(parentId, msg)`` — records an error for a parent
   so the retry link can render.
 
@@ -38,10 +47,53 @@ the component fans both out.
 
 import { create } from "zustand";
 
-import { type ApiResult, fetchTreeNode, type TreeNodeResponse } from "../api";
+import {
+  type ApiResult,
+  fetchTierPage,
+  fetchTreeNode,
+  type TreeNodeResponse,
+  type TreeNodeTier,
+} from "../api";
+
+export interface TierRowsEntry {
+  rows: TreeNodeResponse[];
+  nextCursor: string | null;
+}
+
+/** Build the cache key for the per-tier rows slice.
+
+Format is documented in the store header (``"${parentId}:${rank}"``);
+exported as a pure helper so the store actions and the test fixture
+agree on the contract.
+*/
+export function tierRowsKey(parentId: number, rank: string): string {
+  return `${parentId}:${rank}`;
+}
+
+/**
+ * Merge the ``next_tiers`` envelope from a children response into
+ * the cache. Returns a new ``Map`` so callers can stash it directly
+ * into the store via ``set({ nextTiersByParentId })``; the cache is
+ * left untouched when ``next_tiers`` is ``null`` (true-leaf parent
+ * — no tiers to seed, but no overwrite either).
+ */
+function seedNextTiersFor(
+  previous: Map<number, TreeNodeTier[]>,
+  parentId: number,
+  envelope: TreeNodeTier[] | null,
+): Map<number, TreeNodeTier[]> {
+  if (envelope === null) return previous;
+  const next = new Map(previous);
+  next.set(parentId, envelope);
+  return next;
+}
 
 export interface TreeState {
   childrenByParentId: Map<number, TreeNodeResponse[]>;
+  /** Per-parent tier envelope seeded from the children fetch. */
+  nextTiersByParentId: Map<number, TreeNodeTier[]>;
+  /** Per-tier paginated rows keyed by ``"${parentId}:${rank}"``. */
+  tierRowsByKey: Map<string, TierRowsEntry>;
   expandedIds: Set<number>;
   rootIds: number[] | null;
   loadingParentIds: Set<number>;
@@ -54,6 +106,12 @@ export interface TreeState {
   loadRoots: () => Promise<void>;
   ensureChildren: (parentId: number) => Promise<void>;
   toggleExpand: (id: number) => void;
+  /** Fetch the next page for the cached tier slice. On the first call
+   * (key missing) the cursor is empty so the backend returns the
+   * first page; subsequent calls forward the cached cursor verbatim.
+   * The rows are appended (not replaced) so the tier group keeps
+   * already-rendered rows visible while the next page is in flight. */
+  loadMore: (parentId: number, rank: string) => Promise<void>;
   setError: (parentId: number, msg: string) => void;
   clearError: (parentId: number) => void;
   /** Walk the parent chain for ``targetId`` and expand each node so the
@@ -68,6 +126,8 @@ export interface TreeState {
 
 export const useTaxonomicTree = create<TreeState>((set, get) => ({
   childrenByParentId: new Map(),
+  nextTiersByParentId: new Map(),
+  tierRowsByKey: new Map(),
   expandedIds: new Set(),
   rootIds: null,
   loadingParentIds: new Set(),
@@ -83,14 +143,22 @@ export const useTaxonomicTree = create<TreeState>((set, get) => ({
     const result: ApiResult<{
       parent: TreeNodeResponse;
       children: TreeNodeResponse[];
+      next_tiers: TreeNodeTier[] | null;
+      next_cursor: string | null;
     }> = await fetchTreeNode(0, { includeExtinct });
     const clearedLoading = new Set(get().loadingParentIds);
     clearedLoading.delete(0);
     if (result.status === "ok") {
       const next = new Map(get().childrenByParentId);
       next.set(0, result.data.children);
+      const nextTiers = seedNextTiersFor(
+        get().nextTiersByParentId,
+        0,
+        result.data.next_tiers,
+      );
       set({
         childrenByParentId: next,
+        nextTiersByParentId: nextTiers,
         rootIds: result.data.children.map((row) => row.id),
         loadingParentIds: clearedLoading,
       });
@@ -114,10 +182,16 @@ export const useTaxonomicTree = create<TreeState>((set, get) => ({
     if (result.status === "ok") {
       const next = new Map(get().childrenByParentId);
       next.set(parentId, result.data.children);
+      const nextTiers = seedNextTiersFor(
+        get().nextTiersByParentId,
+        parentId,
+        result.data.next_tiers,
+      );
       const errs = new Map(get().errorByParentId);
       errs.delete(parentId);
       set({
         childrenByParentId: next,
+        nextTiersByParentId: nextTiers,
         loadingParentIds: clearedLoading,
         errorByParentId: errs,
       });
@@ -140,6 +214,46 @@ export const useTaxonomicTree = create<TreeState>((set, get) => ({
       next.add(id);
     }
     set({ expandedIds: next });
+  },
+
+  /**
+   * Fetch the next page for ``(parentId, rank)`` and append the rows
+   * to the cached slice. On the first call the slice is missing —
+   * the backend returns ``cursor = null`` so the cache is seeded
+   * with the first page. Subsequent calls forward the cached cursor
+   * (the backend returns the next opaque cursor or ``null`` at the
+   * last page so the next call from the UI either starts again or
+   * lands on the empty state).
+   *
+   * The cached ``next_cursor`` of the last tier entry in the source
+   * envelope (``nextTiersByParentId``) is the seeded cursor on the
+   * very first :func:`loadMore` so we don't double-fetch the first
+   * page the children response already returned.
+   */
+  loadMore: async (parentId: number, rank: string) => {
+    const key = tierRowsKey(parentId, rank);
+    const cached = get().tierRowsByKey.get(key);
+    let cursor: string | null = cached?.nextCursor ?? null;
+    if (cached === undefined) {
+      // Seed the cursor from the tier envelope the children fetch
+      // already returned so the first :func:`loadMore` does not
+      // re-request rows the backend already sent.
+      const tiers = get().nextTiersByParentId.get(parentId);
+      const tier = tiers?.find((t) => t.rank === rank);
+      cursor = tier?.next_cursor ?? null;
+    }
+    const result = await fetchTierPage(parentId, rank, cursor);
+    if (result.status !== "ok") return;
+    const incoming = result.data.children;
+    const nextRows = cached === undefined
+      ? incoming
+      : [...cached.rows, ...incoming];
+    const nextMap = new Map(get().tierRowsByKey);
+    nextMap.set(key, {
+      rows: nextRows,
+      nextCursor: result.data.next_cursor,
+    });
+    set({ tierRowsByKey: nextMap });
   },
 
   setError: (parentId: number, msg: string) => {
@@ -253,6 +367,8 @@ export const useTaxonomicTree = create<TreeState>((set, get) => ({
     set({
       includeExtinct: value,
       childrenByParentId: new Map(),
+      nextTiersByParentId: new Map(),
+      tierRowsByKey: new Map(),
       expandedIds: new Set(),
       rootIds: null,
       errorByParentId: new Map(),
