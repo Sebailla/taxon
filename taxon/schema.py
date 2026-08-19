@@ -23,6 +23,7 @@ class Taxon(MarkerColumns, Base):
         Index("ix_taxa_parent_name", "parent_id", "name"),
         Index("ix_taxa_rank", "rank"),
         Index("ix_taxa_display_level", "display_level"),
+        Index("ix_taxa_parent_rank_name", "parent_id", "rank", "name"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
