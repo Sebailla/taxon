@@ -117,7 +117,7 @@ PR A.2 lands as 3 commits, ~150 LOC.
 
 ### Work unit 1 — failing vitest for tier-group contract
 
-- [ ] 1.1 `frontend/src/components/TaxonomicTree.test.tsx` adds: `renders_tier_groups_collapsed_by_default`, `expanding_tier_group_fetches_first_page`, `load_more_appends_rows`, `keyboard_navigation_across_tier_groups`, `aria_labels_on_tier_group_and_button`.
+- [x] 1.1 `frontend/src/components/TaxonomicTree.test.tsx` adds: `renders_tier_groups_collapsed_by_default`, `expanding_tier_group_fetches_first_page`, `load_more_appends_rows`, `keyboard_navigation_across_tier_groups`, `aria_labels_on_tier_group_and_button`. (#C.2)
 - [ ] 1.2 Commit: `test(tree): pin tier-group rendering contract`.
 
 ### Work unit 2 — store gains `nextTiers` + `tierRowsByKey` + `loadMore`
@@ -136,7 +136,7 @@ PR A.2 lands as 3 commits, ~150 LOC.
 
 ### Work unit 4 — `<TierGroup>` component + `walk()` integration
 
-- [ ] 4.1 `frontend/src/components/TaxonomicTree.tsx`: new `<TierGroup tier={TreeNodeTier} parentId={number} depth={number} />` component — renders header (caret + label + row count), child rows, "Load more" button when `next_cursor` is non-empty; tier rows sit one indent level deeper than the header.
+- [x] 4.1 `frontend/src/components/TaxonomicTree.tsx`: new `<TierGroup tier={TreeNodeTier} parentId={number} depth={number} />` component — renders header (caret + label + row count), child rows, "Load more" button when `next_cursor` is non-empty; tier rows sit one indent level deeper than the header. (#C.2)
 - [ ] 4.2 `walk()` gains `visitTierGroup(parentId, depth, tier)` callback that calls `<TierGroup>` between direct children and the existing grandchild flow.
 - [ ] 4.3 Default state: first tier (`phylum`) expanded, subsequent tiers collapsed; matching caret toggle.
 - [ ] 4.4 Failing tests from work unit 1 (`renders_tier_groups_collapsed_by_default`, `expanding_tier_group_fetches_first_page`, `load_more_appends_rows`) now pass.
@@ -144,7 +144,7 @@ PR A.2 lands as 3 commits, ~150 LOC.
 
 ### Work unit 5 — keyboard nav + ARIA
 
-- [ ] 5.1 Tab order across tier groups in cascade-rank order; ArrowDown/Up inside a group; ArrowRight/Left expand/collapse the header; Enter toggles row caret when `has_children=true`; Home/End jumps to first/last row of the active group.
+- [x] 5.1 Tab order across tier groups in cascade-rank order; ArrowDown/Up inside a group; ArrowRight/Left expand/collapse the header; Enter toggles row caret when `has_children=true`; Home/End jumps to first/last row of the active group. (#C.2)
 - [ ] 5.2 ARIA: tier group container `role="group"` + `aria-label="<label> group"`; header `role="button"` + `aria-expanded` + `aria-controls`; "Load more" button `aria-label="Load more <label>"`.
 - [ ] 5.3 Commit: `feat(tree): tier-group keyboard navigation + ARIA labels`.
 
