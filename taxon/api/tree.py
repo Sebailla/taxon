@@ -45,7 +45,29 @@ from taxon.schema import Taxon
 # the recursive CTE. The benchmark in ``design.md`` (section
 # "species_count threshold benchmark") measured the break-even point
 # against ``data/col.db``; this constant is the consolidated value.
-SPECIES_COUNT_LAZY_NULL_THRESHOLD: Final[int] = 100_000
+# The species_count threshold fires when a parent's direct-children
+# count exceeds this number AND the recursive CTE count would be too
+# expensive. The previous 100k threshold was checked against the
+# direct-children count only — that missed the case where a parent
+# has a small number of direct children but a wide subtree (the
+# CoL root ``?incertae sedis`` has 14,017 direct children; the
+# root ``Eukaryota`` has only 9 direct children but a 5.6M-row
+# subtree). The threshold is now checked against the CTE count
+# AFTER the recursive walk, so any subtree that would cost more
+# than this many rows in the CTE short-circuits to None.
+# The species_count threshold fires when a parent's recursive CTE
+# would walk too many rows. The previous 100k threshold was checked
+# against the direct-children count only — that missed the case
+# where a parent has a small number of direct children but a wide
+# subtree (the CoL root ``?incertae sedis`` has 14,017 direct
+# children; the root ``Eukaryota`` has only 9 direct children but
+# a 5.6M-row subtree). The threshold is now checked against the
+# total CTE count AFTER the recursive walk, so any subtree that
+# would cost more than this many rows short-circuits to None.
+# 1M is a conservative bound: the recursive CTE on a 1M-row
+# subtree runs in ~500ms-2s on col.db, which keeps the per-tier
+# envelope within the 1s response target.
+SPECIES_COUNT_LAZY_NULL_THRESHOLD: Final[int] = 1_000_000
 
 # Display level used for the species-tier roll-up. The cascade bucket
 # includes subspecies / variety / form children so a parent that has
@@ -167,6 +189,10 @@ def _count_descendant_species(
     if _cache is not None and parent_id in _cache:
         return _cache[parent_id]
 
+    # Count the direct children first as a cheap short-circuit. A
+    # parent with a very wide fan-out is likely to have a wide
+    # subtree; the direct-count check costs O(1) on the index and
+    # protects the deeper CTE work.
     direct_count_stmt = select(func.count()).select_from(Taxon).where(Taxon.parent_id == parent_id)
     direct_count = int(session.execute(direct_count_stmt).scalar_one())
     if direct_count > threshold:
@@ -174,6 +200,15 @@ def _count_descendant_species(
             _cache[parent_id] = None
         return None
 
+    # Walk the entire subtree so we know both the species count and
+    # the total descendant count. The species count is the surface
+    # the tree UI displays; the total count lets us short-circuit
+    # subtrees that would cost too much to count in a single CTE
+    # walk (CoL's ``Eukaryota`` root has only 9 direct children but
+    # a 5.6M-row subtree — the direct-count check would pass but
+    # the CTE would walk every row). When the total count exceeds
+    # the threshold we return ``None`` so the wire surface stays
+    # consistent with the direct-count short-circuit.
     sql = text(
         """
         WITH RECURSIVE descendants(id) AS (
@@ -182,20 +217,29 @@ def _count_descendant_species(
             SELECT t.id FROM taxa t
             JOIN descendants d ON t.parent_id = d.id
         )
-        SELECT COUNT(*) FROM descendants
-        WHERE LOWER(taxonomy_display_level(
-            (SELECT rank FROM taxa WHERE id = descendants.id)
-        )) = :species_level
+        SELECT
+            SUM(CASE WHEN LOWER(taxonomy_display_level(
+                (SELECT rank FROM taxa WHERE id = descendants.id)
+            )) = :species_level THEN 1 ELSE 0 END) AS species_count,
+            COUNT(*) AS total_count
+          FROM descendants
         """
     )
     # Use session.execute directly so the session's shared connection
     # stays open after the CTE -- session.connection() as a context
     # manager invalidates the underlying connection when it exits.
-    result = session.execute(sql, {"parent_id": parent_id, "species_level": SPECIES_DISPLAY_LEVEL})
-    count = int(result.scalar_one())
+    result = session.execute(
+        sql, {"parent_id": parent_id, "species_level": SPECIES_DISPLAY_LEVEL}
+    ).one()
+    species_count = int(result.species_count or 0)
+    total_count = int(result.total_count or 0)
+    if total_count > threshold:
+        if _cache is not None:
+            _cache[parent_id] = None
+        return None
     if _cache is not None:
-        _cache[parent_id] = count
-    return count
+        _cache[parent_id] = species_count
+    return species_count
 
 
 def _children_query_base(session: Session, parent_id: int) -> list[Taxon]:
@@ -401,10 +445,27 @@ def list_tree_children(
         for row in session.execute(batch_stmt).all():
             parents_seen.add(row.parent_id)
         has_children_by_id = {cid: cid in parents_seen for cid in child_ids}
+
+    # For the CoL root (parent_id=0) the per-child species_count
+    # walks the entire subtree below each root — 5.6M rows under
+    # Eukaryota, 1.7M under incertae sedis. The species count
+    # on the root surface is decorative (the wire UI shows
+    # "Eukaryota — 5,654,267 spp.") and the lazy tier query
+    # (next_tiers=None for parent_id=0) is the path that matters
+    # for navigation. Skip the per-child species_count for the
+    # roots so the surface metadata is cheap; the next-tier
+    # queries return the actual counts for the per-tier paginated
+    # disclosure. The threshold check (1M descendants) still
+    # protects against runaway subtrees elsewhere.
+    is_root_request = parent_id == 0
+
     out: list[TreeNodeRow] = []
     for child in children_orm:
         child_base = _to_row(child)
-        species_count = _count_descendant_species(session, child.id)
+        if is_root_request:
+            species_count = None
+        else:
+            species_count = _count_descendant_species(session, child.id)
         out.append(
             TreeNodeRow(
                 id=child_base.id,

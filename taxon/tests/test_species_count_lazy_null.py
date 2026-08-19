@@ -94,9 +94,18 @@ def _id_for_name(client: TestClient, name: str) -> int:
         return int(taxon.id)
 
 
-def test_threshold_default_value_is_100_000() -> None:
-    """The default lazy-null threshold is the contract value 100,000."""
-    assert tree_mod.SPECIES_COUNT_LAZY_NULL_THRESHOLD == 100_000
+def test_threshold_default_value_is_1_000_000() -> None:
+    """The default lazy-null threshold is the contract value 1,000,000.
+
+    The threshold was raised from 100,000 to 1,000,000 to cover
+    the CoL root ``Eukaryota`` and ``incertae sedis`` cases:
+    those roots have <15,000 direct children but multi-million-row
+    subtrees. The threshold is now checked against the CTE count
+    (the total descendant rows the recursive walk traverses), not
+    just the direct children. 1M keeps the per-tier envelope
+    within the 1s response target.
+    """
+    assert tree_mod.SPECIES_COUNT_LAZY_NULL_THRESHOLD == 1_000_000
 
 
 def test_species_count_is_integer_below_threshold(client: TestClient) -> None:
