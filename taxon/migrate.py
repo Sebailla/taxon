@@ -34,8 +34,18 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
 from taxon.api.database_url import resolve_database_url
+from taxon.api.projections import PROJECTION_TABLES, register_display_level
+from taxon.api.tree import SPECIES_COUNT_LAZY_NULL_THRESHOLD
 from taxon.api.workspace import WORKSPACE_TABLES
 from taxon.schema import Base
+
+#: Every table this CLI is responsible for creating. ``apply`` widens
+#: this union so a fresh DB boots with both the workspace and the
+#: projection tables on disk. The CLI does NOT enforce ordering; the
+#: ORM's foreign keys would still resolve because
+#: ``TaxonDescendantCount.taxon_id`` references ``taxa.id`` which is
+#: created earlier in the same ``create_all`` call.
+_MANAGED_TABLES: tuple[str, ...] = WORKSPACE_TABLES + PROJECTION_TABLES
 
 # Composite index added by PR A.2 of #76. The DDL is intentionally
 # ``CREATE INDEX IF NOT EXISTS`` so the step is idempotent — a second
@@ -151,7 +161,7 @@ def _run_dry_run(engine: Engine, table_names: tuple[str, ...]) -> int:
             f"(run `python -m taxon.migrate apply` to create them)"
         )
         return 1
-    print(f"[dry-run] all {len(table_names)} workspace tables already present")
+    print(f"[dry-run] all {len(table_names)} managed tables already present")
     return 0
 
 
@@ -168,9 +178,7 @@ def _run_apply(
     if not only_index:
         missing = _missing_tables(engine, table_names)
         if not missing:
-            print(
-                f"[apply] all {len(table_names)} workspace tables already present; no changes made"
-            )
+            print(f"[apply] all {len(table_names)} managed tables already present; no changes made")
         else:
             Base.metadata.create_all(
                 engine, tables=[Base.metadata.tables[name] for name in missing]
@@ -181,6 +189,49 @@ def _run_apply(
 
     if not skip_indexes:
         _ensure_indexes(engine)
+    return 0
+
+
+def _run_apply_projection(engine: Engine, *, threshold: int, budget_seconds: float | None) -> int:
+    """Populate ``taxon_descendant_counts`` for every threshold-exceeding parent.
+
+    Mirrors the offline materialisation path that ``taxon.import_data``
+    runs at the end of a successful CoL re-import. The CLI disables
+    the per-request SLO guard (``budget_seconds=None``) because the
+    operator explicitly asked for a full rebuild.
+
+    Returns the number of rows written. Idempotent: re-running on a
+    DB that already has the projection updates every row in place.
+
+    Creates the projection table if it is missing (idempotent
+    ``create_all``) so the CLI works on a legacy DB that has not run
+    ``apply`` yet — the common case after a fresh CoL clone.
+    """
+    # Defer the import so the module loads even when only the
+    # ``apply`` subcommand is invoked (avoids loading
+    # ``taxon.schema.Taxon`` for operators who only want the table
+    # migration).
+    from taxon.api.projections import materialize_all
+
+    register_display_level(engine)
+
+    # Idempotent: pre-existing tables are left alone.
+    table_objs = [Base.metadata.tables[name] for name in PROJECTION_TABLES]
+    Base.metadata.create_all(engine, tables=table_objs)
+
+    from sqlalchemy.orm import sessionmaker
+
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with SessionLocal() as session:
+        written = materialize_all(
+            session,
+            threshold=threshold,
+            budget_seconds=budget_seconds,
+        )
+    print(
+        f"[apply-projection] materialised {written} row(s) "
+        f"(threshold={threshold}, budget_seconds={budget_seconds})"
+    )
     return 0
 
 
@@ -227,19 +278,51 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip the index-ensure step and only run the table-creation migration.",
     )
+    apply_projection_parser = sub.add_parser(
+        "apply-projection",
+        help="populate taxon_descendant_counts for every threshold-exceeding parent (idempotent)",
+        parents=[parent],
+    )
+    apply_projection_parser.add_argument(
+        "--threshold",
+        type=int,
+        default=SPECIES_COUNT_LAZY_NULL_THRESHOLD,
+        help=(
+            "Direct-children count above which a parent is included in the projection. "
+            "Defaults to SPECIES_COUNT_LAZY_NULL_THRESHOLD so the offline materialisation "
+            "covers the same population the lazy-null guard serves."
+        ),
+    )
+    apply_projection_parser.add_argument(
+        "--budget-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Per-parent rebuild budget. Materialisations that exceed the budget are skipped. "
+            "Defaults to None (no budget) so the CLI always writes every row; the API's "
+            "first-read path uses REBUILD_BUDGET_SECONDS instead."
+        ),
+    )
     args = parser.parse_args(argv)
 
     database_url = _resolve_database_url(args.database_url)
     engine = create_engine(database_url)
+    register_display_level(engine)
 
     if args.mode == "dry-run":
-        return _run_dry_run(engine, WORKSPACE_TABLES)
+        return _run_dry_run(engine, _MANAGED_TABLES)
     if args.mode == "apply":
         return _run_apply(
             engine,
-            WORKSPACE_TABLES,
+            _MANAGED_TABLES,
             only_index=args.only_index,
             skip_indexes=args.skip_indexes,
+        )
+    if args.mode == "apply-projection":
+        return _run_apply_projection(
+            engine,
+            threshold=args.threshold,
+            budget_seconds=args.budget_seconds,
         )
     parser.error(f"unknown mode: {args.mode}")
     return 2  # unreachable; parser.error exits

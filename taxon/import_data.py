@@ -69,6 +69,7 @@ def import_dataset(
         _insert_taxon_batch(engine, batch, source_to_database_id)
 
     _populate_species_paths(engine)
+    _rebuild_descendant_counts_projection(engine)
     return counts
 
 
@@ -182,6 +183,42 @@ def _populate_species_paths(engine: Engine) -> None:
         if paths:
             session.execute(insert(SpeciesPath), paths)
             session.commit()
+
+
+def _rebuild_descendant_counts_projection(engine: Engine) -> None:
+    """Recompute ``taxon_descendant_counts`` after a full re-import.
+
+    The descendant-counts-projection change requires the projection
+    table to be re-populated whenever the underlying ``taxa`` table
+    is rebuilt — a fresh CoL re-import drops every taxon row, so any
+    cached projection rows would point at FK ids that no longer
+    exist. The rebuild runs at the very end of :func:`import_dataset`
+    so the table is fresh on the next boot.
+
+    Wires :func:`taxon.api.projections.register_display_level` so
+    the recursive CTE works on the import-data engine (it builds a
+    bare engine with only ``PRAGMA foreign_keys=ON``). The import
+    is an offline caller, so ``budget_seconds=None`` disables the
+    SLO guard.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from taxon.api.projections import (
+        PROJECTION_TABLES,
+        materialize_all,
+        register_display_level,
+    )
+
+    register_display_level(engine)
+    # Idempotent ``create_all`` so the projection table exists even on
+    # a fresh DB that has not run ``python -m taxon.migrate apply``.
+    table_objs = [Base.metadata.tables[name] for name in PROJECTION_TABLES]
+    Base.metadata.create_all(engine, tables=table_objs)
+
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with SessionLocal() as session:
+        written = materialize_all(session, budget_seconds=None)
+    print(f"Rebuilt descendant-counts projection: {written} row(s)")
 
 
 def _print_counts(counts: ImportCounts, database: Path) -> None:

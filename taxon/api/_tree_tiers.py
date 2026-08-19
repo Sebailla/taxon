@@ -433,6 +433,18 @@ def _batch_species_counts(
     """
     if not parent_ids:
         return {}
+
+    # Projection cache pre-check (descendant-counts-projection change):
+    # every parent with a row in ``taxon_descendant_counts`` returns
+    # straight from the cache in O(1). Cached parents are excluded
+    # from the CTE seed so the recursive walk never reaches them and
+    # cannot overwrite a cached value. ``lookup_many`` returns an
+    # empty dict when the table is absent (legacy DB), so this branch
+    # is a no-op until the projection table exists.
+    from taxon.api.projections import lookup_many
+
+    cached = lookup_many(session, parent_ids)
+
     # Threshold check: short-circuit on direct children count so the
     # CTE doesn't run for parents that exceed the threshold.
     direct_placeholders = ", ".join(f":dpid_{i}" for i in range(len(parent_ids)))
@@ -448,6 +460,11 @@ def _batch_species_counts(
     result: dict[int, int | None] = {}
     eligible: list[int] = []
     for pid in parent_ids:
+        if pid in cached:
+            # Cache wins over CTE; cached stale rows survive because
+            # they are excluded from the seed union below.
+            result[pid] = cached[pid]
+            continue
         if direct_counts.get(pid, 0) > threshold:
             result[pid] = None
         else:

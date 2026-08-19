@@ -185,9 +185,36 @@ def _count_descendant_species(
     computed display level equals ``species``. The function
     short-circuits on the direct-children count BEFORE running the
     CTE so the threshold check itself costs O(1) on the index.
+
+    Projection pre-check (descendant-counts-projection change)
+    ----------------------------------------------------------
+    Before falling through to the direct-count guard, the helper
+    consults :data:`taxon.api.projections.taxon_descendant_counts`.
+    A cached row short-circuits the function with ``species_count``
+    in O(1) — no threshold guard, no recursive CTE. A miss
+    continues to the existing path; if the parent is over the
+    threshold the helper now ALSO fires
+    :func:`taxon.api.projections.materialize_for_parent` so the
+    next request hits the cache instead of paying the CTE cost
+    again. The rebuild is bounded by
+    :data:`taxon.api.projections.REBUILD_BUDGET_SECONDS`; over
+    budget the helper returns ``None`` and no row is written.
     """
     if _cache is not None and parent_id in _cache:
         return _cache[parent_id]
+
+    # Lazy import to keep the read-path helper importable when the
+    # projection table is absent (e.g. legacy DBs that pre-date
+    # the schema migration): the import only fails when the helper
+    # is actually called, and the projection helpers themselves
+    # are tolerant of the missing table.
+    from taxon.api.projections import lookup_one, materialize_for_parent
+
+    cached = lookup_one(session, parent_id)
+    if cached is not None:
+        if _cache is not None:
+            _cache[parent_id] = cached
+        return cached
 
     # Count the direct children first as a cheap short-circuit. A
     # parent with a very wide fan-out is likely to have a wide
@@ -196,9 +223,15 @@ def _count_descendant_species(
     direct_count_stmt = select(func.count()).select_from(Taxon).where(Taxon.parent_id == parent_id)
     direct_count = int(session.execute(direct_count_stmt).scalar_one())
     if direct_count > threshold:
+        # First-touch rebuild: synchronous, bounded by the per-request
+        # SLO. A successful rebuild populates the projection so the
+        # next request hits the cache and never pays the CTE cost
+        # again. An over-budget rebuild returns ``None`` (lazy-null)
+        # and leaves the projection table empty for this parent.
+        rebuilt = materialize_for_parent(session, parent_id)
         if _cache is not None:
-            _cache[parent_id] = None
-        return None
+            _cache[parent_id] = rebuilt
+        return rebuilt
 
     # Walk the entire subtree so we know both the species count and
     # the total descendant count. The species count is the surface
