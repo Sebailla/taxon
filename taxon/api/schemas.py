@@ -333,6 +333,42 @@ class TreeNodeResponse(TaxonResponse):
     authorship: str
 
 
+class TreeNodeTier(_ORMBase):
+    """One cascade tier below the parent in
+    ``GET /api/tree/children?parent_id={id}``.
+
+    Each tier represents a rank bucket (phylum / class / order /
+    family / genus / species) under the parent. The frontend renders
+    one tier group per :attr:`rank` with the dropdown's label taken
+    from :attr:`label`. :attr:`examples` carries the first three
+    canonical names for tooltips. :attr:`children` is the paginated
+    page of :class:`TreeNodeResponse` rows for this tier (capped at
+    the requested ``tier_limit``); :attr:`next_cursor` is non-empty
+    when more rows exist beyond the cap so the client can request the
+    next page with ``?tier={rank}&cursor={cursor}``.
+
+    The cursor is opaque to the client — base64 of ``f"{name}\x00{id}"``
+    — so re-imports that renumber ids do not invalidate the pagination
+    state (see the cursor-stability contract in
+    ``index-and-performance.md``).
+    """
+
+    rank: str
+    """Lower-cased cascade bucket (``"phylum"``, ``"class"``...)."""
+
+    label: str
+    """User-facing tier label, capitalised from :attr:`rank`."""
+
+    examples: list[str] = []
+    """First three canonical names; convenience for tooltips."""
+
+    children: list[TreeNodeResponse] = []
+    """Per-tier rows carrying every :class:`TreeNodeResponse` field."""
+
+    next_cursor: str | None = None
+    """Opaque base64 cursor for the next page of this tier; ``None`` at the last page."""
+
+
 class TreeChildrenResponse(_ORMBase):
     """Envelope for ``GET /api/tree/children?parent_id={id}``.
 
@@ -342,10 +378,20 @@ class TreeChildrenResponse(_ORMBase):
     :class:`TreeNodeResponse` field. ``next_cursor`` is non-empty
     when the result set exceeded the page ``limit``; absent
     otherwise.
+
+    ``next_tiers`` carries one :class:`TreeNodeTier` per cascade
+    bucket below the parent (phylum, class, order, family, genus,
+    species) when the parent has non-direct descendants at that
+    rank. ``None`` for a true-leaf parent. Each tier carries its own
+    paginated ``children`` slice and an opaque ``next_cursor`` so
+    the client can advance per tier independently. The field is
+    additive — clients that consume only the direct-children slice
+    see ``next_tiers: null`` and continue working.
     """
 
     parent: TaxonResponse | None
     children: list[TreeNodeResponse]
+    next_tiers: list[TreeNodeTier] | None = None
     next_cursor: str | None = None
 
 
@@ -478,6 +524,7 @@ __all__ = [
     "TaxonResponse",
     "TreeChildrenResponse",
     "TreeNodeResponse",
+    "TreeNodeTier",
     "TreeSearchHit",
     "TreeSearchResponse",
 ]
