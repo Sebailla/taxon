@@ -58,11 +58,16 @@ _logger = logging.getLogger(__name__)
 
 #: Per-request rebuild budget. A materialisation that exceeds this
 #: threshold returns ``None`` so the read path falls back to lazy-null
-#: — the projection is an optimisation, not a guarantee. ``1s`` keeps
-#: the rebuild inside the per-tier CTE walk's response target. Offline
-#: callers (``apply-projection``, ``import_data``) pass
-#: ``budget_seconds=None`` to disable the guard.
-REBUILD_BUDGET_SECONDS: float = 1.0
+#: — the projection is an optimisation, not a guarantee. ``15s`` is
+#: the empirical wall-clock cost of a full recursive CTE walk on a
+#: CoL subtree (Eukaryota with 5.6M descendants finishes inside the
+#: budget; larger subtrees that cannot finish in 15s still return
+#: ``None`` and the projection stays empty for that parent). The
+#: first request for a previously-unmaterialised parent pays the
+#: rebuild latency inline; subsequent requests return from the cache
+#: in O(1). Offline callers (``apply-projection``, ``import_data``)
+#: pass ``budget_seconds=None`` to disable the guard.
+REBUILD_BUDGET_SECONDS: float = 15.0
 
 #: Table names owned by this module. Mirrors
 #: :data:`taxon.api.workspace.WORKSPACE_TABLES` so ``python -m taxon.migrate apply``
@@ -238,7 +243,13 @@ def materialize_for_parent(
         existing.species_count = species_count
         existing.total_count = total_count
         existing.computed_at = now_iso
-    session.flush()
+    # Commit at the boundary so the row survives the request session
+    # close in ``taxon.api.db.get_db`` (``session.close()`` without
+    # ``session.commit()`` would roll the unit-of-work back). The
+    # commit also makes the row visible to subsequent reads within
+    # the same request — without it, the per-tier CTE walker that
+    # runs after this helper would not see the cached count.
+    session.commit()
     return species_count
 
 

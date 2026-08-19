@@ -14,6 +14,7 @@ lives in Sub-PRs 2B and 2C and is deliberately not exercised here.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -243,3 +244,48 @@ def test_schema_rejects_empty_canonical_names(model: type, kwargs: dict[str, obj
             parent_id=None,
             **kwargs,
         )
+
+
+def test_file_backed_lifespan_creates_projection_table(tmp_path: Path) -> None:
+    """The FastAPI lifespan bootstraps ``taxon_descendant_counts`` on a fresh DB.
+
+    Regression net for the descendant-counts-projection change: a
+    fresh ``data/col.db`` boots with the projection table already on
+    disk so the first ``GET /api/tree/children`` for an over-threshold
+    parent does NOT raise ``OperationalError: no such table`` on the
+    ``session.get(TaxonDescendantCount, ...)`` call inside
+    :func:`materialize_for_parent`. Without this fix the operator
+    must run ``python -m taxon.migrate apply`` before booting the API.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    from taxon.api import create_app
+    from taxon.api.database_url import resolve_database_url
+
+    db = tmp_path / "taxon.db"
+    db.touch()
+    url = f"sqlite:///{db}"
+    # Sanity check: the URL resolver must not silently swap our fresh DB.
+    assert resolve_database_url(None, fallback_url="sqlite:///fallback") != url
+    app = create_app(database_url=url)
+
+    with TestClient(app) as _:
+        pass  # lifespan startup + shutdown
+
+    inspector = inspect(create_engine(url))
+    assert "taxon_descendant_counts" in set(inspector.get_table_names())
+
+
+def test_rebuild_budget_default_is_15_seconds() -> None:
+    """``REBUILD_BUDGET_SECONDS`` is 15s — empirically fits a CoL subtree rebuild.
+
+    The previous default of 1.0s was too tight: a full recursive CTE
+    walk on the CoL Eukaryota subtree (5.6M descendants) takes ~5-15s
+    on a developer machine. With 1.0s the SLO guard always fired and
+    the projection stayed empty for every over-threshold parent. 15s
+    is the empirical wall-clock cost observed in the runtime harness
+    during the original change's verification.
+    """
+    from taxon.api.projections import REBUILD_BUDGET_SECONDS
+
+    assert REBUILD_BUDGET_SECONDS == 15.0
