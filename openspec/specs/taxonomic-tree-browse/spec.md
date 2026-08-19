@@ -117,7 +117,6 @@ The system SHALL make rows keyboard-navigable (Enter toggles caret, ArrowDown/Up
 ## Out of Scope
 
 - `Source` filter backend wiring (no-op first PR; multi-source in follow-up).
-- `species_count` materialization at deep nodes (lazy `null` >100k direct children).
 - Cross-reload persistence of expanded tree state.
 
 ## Delta Applied
