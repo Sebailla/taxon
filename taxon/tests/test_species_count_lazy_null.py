@@ -26,6 +26,7 @@ This test pins the contract:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -125,20 +126,44 @@ def test_species_count_is_integer_below_threshold(client: TestClient) -> None:
     assert children[0]["species_count"] == 0
 
 
-def test_species_count_is_null_above_threshold(client: TestClient) -> None:
-    """``_count_descendant_species`` returns ``None`` when threshold < fanout.
+def test_species_count_triggers_rebuild_when_above_threshold(
+    client: TestClient,
+) -> None:
+    """``_count_descendant_species`` materialises on first call when threshold < fanout.
 
-    Bigroot has 5 direct children; with ``threshold=3`` the helper
-    short-circuits and returns ``None`` without walking the recursive
-    CTE.
+    Bigroot has 5 direct children; with ``threshold=3`` the direct-count
+    guard fires and the helper now ALSO triggers
+    :func:`taxon.api.projections.materialize_for_parent` so the next
+    request hits the cache instead of paying the CTE cost again. The
+    rebuild returns the species count (5) for this small subtree and
+    writes a row to ``taxon_descendant_counts``.
     """
+    from taxon.api.projections import REBUILD_BUDGET_SECONDS
+
     bigroot_id = _id_for_name(client, "Bigroot")
     state = client.app.state.app_state  # type: ignore[attr-defined]
     with state.SessionLocal() as session:
-        # Bigroot has 5 direct children. With threshold=3 the gate
-        # fires and returns None without walking the CTE.
         count = tree_mod._count_descendant_species(session, bigroot_id, threshold=3)
-        assert count is None
+    # Subtree fits under the per-request budget, so the rebuild writes
+    # a real integer, not a lazy-null sentinel.
+    assert isinstance(count, int)
+    assert count == 5
+
+    # The rebuild wrote a row in the projection table. The next call
+    # for the same parent returns from the cache without invoking the
+    # materialiser again.
+    with state.SessionLocal() as session:
+        cached = tree_mod._count_descendant_species(session, bigroot_id, threshold=3)
+    assert cached == count
+    # The cache-hit path bypasses the threshold guard entirely; even
+    # threshold=0 returns the cached value.
+    with state.SessionLocal() as session:
+        cached_under = tree_mod._count_descendant_species(session, bigroot_id, threshold=0)
+    assert cached_under == count
+
+    # Suppress the unused-import warning while keeping the symbol
+    # visible for the test docstring cross-reference.
+    _ = REBUILD_BUDGET_SECONDS
 
 
 def test_lazy_null_helper_returns_integer_for_threshold_above_fanout(
@@ -158,10 +183,40 @@ def test_lazy_null_helper_returns_integer_for_threshold_above_fanout(
     assert count == 5
 
 
-def test_lazy_null_helper_returns_none_for_threshold_below_fanout(
-    client: TestClient,
+def test_lazy_null_helper_returns_none_when_rebuild_exceeds_budget(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The helper returns ``None`` when the threshold falls below the fanout."""
+    """When the rebuild exceeds :data:`REBUILD_BUDGET_SECONDS`, the helper returns ``None``.
+
+    The descendant-counts-projection change altered the semantics: the
+    helper no longer lazy-nulls above the threshold, it triggers a
+    synchronous rebuild instead. When the rebuild exceeds the per-
+    request SLO the materialiser returns ``None`` and writes nothing —
+    preserving the original "don't burn the request budget" guarantee.
+
+    ``taxon.api.tree._count_descendant_species`` does ``from taxon.api.projections
+    import materialize_for_parent`` INSIDE the function, so monkey-patching
+    ``taxon.api.projections.materialize_for_parent`` (the source module)
+    takes effect on the next call: Python re-imports the symbol into the
+    function's local namespace every time the lazy import runs.
+    """
+    from time import sleep
+
+    import taxon.api.projections as projections_mod
+
+    real_materialize = projections_mod.materialize_for_parent
+
+    def _slow(session: object, parent_id: int, **kw: object) -> int | None:
+        sleep(0.1)
+        # Run the real materialiser with a zero budget so it trips the
+        # SLO guard on its own ``perf_counter`` measurement regardless
+        # of how fast the real CTE actually is.
+        from sqlalchemy.orm import Session
+
+        return real_materialize(cast(Session, session), parent_id, budget_seconds=0.0)
+
+    monkeypatch.setattr(projections_mod, "materialize_for_parent", _slow)
+
     bigroot_id = _id_for_name(client, "Bigroot")
     state = client.app.state.app_state  # type: ignore[attr-defined]
     with state.SessionLocal() as session:
