@@ -20,24 +20,22 @@ Usage::
     python -m taxon.migrate apply --only-index       # skip non-index migrations
     python -m taxon.migrate apply --skip-indexes     # skip the index migration step
 
-The script reads ``TAXON_DATABASE_URL`` (default ``sqlite:///./data/taxon.db``)
-so the operator can point it at a different DB without code edits.
+The script reads ``TAXON_DATABASE_URL`` (default ``sqlite:///./data/col.db``,
+falling back to ``sqlite:///./data/taxon.db`` when the primary file is
+missing) so the operator can point it at a different DB without code edits.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
+from taxon.api.database_url import resolve_database_url
 from taxon.api.workspace import WORKSPACE_TABLES
 from taxon.schema import Base
-
-DEFAULT_DATABASE_URL = "sqlite:///./data/taxon.db"
 
 # Composite index added by PR A.2 of #76. The DDL is intentionally
 # ``CREATE INDEX IF NOT EXISTS`` so the step is idempotent — a second
@@ -54,12 +52,15 @@ future migrations (PR A.3+) append tuples here without touching the CLI."""
 
 
 def _resolve_database_url(database_url: str | None) -> str:
-    resolved = database_url or os.environ.get("TAXON_DATABASE_URL") or DEFAULT_DATABASE_URL
-    if resolved.startswith("sqlite:///") and not resolved.startswith("sqlite:///:memory:"):
-        path_part = resolved[len("sqlite:///") :]
-        if path_part and path_part != ":memory:":
-            Path(path_part).expanduser().parent.mkdir(parents=True, exist_ok=True)
-    return resolved
+    """Resolve the database URL using the shared helper.
+
+    Delegates to :func:`taxon.api.database_url.resolve_database_url`
+    so the CLI stays in lock-step with the FastAPI factory's default
+    and on-disk fallback behaviour. Returns the resolved SQLAlchemy
+    URL; the helper already takes care of creating the parent
+    directory when the URL is a file-backed SQLite path.
+    """
+    return resolve_database_url(database_url)
 
 
 def _missing_tables(engine: Engine, table_names: tuple[str, ...]) -> list[str]:
