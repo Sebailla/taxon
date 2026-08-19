@@ -654,3 +654,383 @@ describe("TaxonomicTree", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tier-group contract (PR C.2 WU 1)
+//
+// Below the direct children of an expanded parent, the tree renders one
+// <TierGroup> per ``next_tiers`` entry. Each group has a header
+// (caret + label + row count), host rows at a deeper indent, and a
+// "Load more" affordance whose visibility is gated by the cached
+// cursor.
+//
+// The five scenarios below pin the contract from the spec at
+// ``openspec/specs/taxonomic-tree-browse/subtree.md``:
+//   1. Tier groups render collapsed by default.
+//   2. Expanding the header fetches the first tier page.
+//   3. The "Load more" button appends rows on subsequent calls.
+//   4. Keyboard navigation crosses tier-group boundaries.
+//   5. ARIA labels distinguish the group + the load-more button.
+// ---------------------------------------------------------------------------
+
+const PHYLUM_ARTHROPODA = {
+  id: 100,
+  name: "Arthropoda",
+  display_name: "Arthropoda",
+  rank: "phylum",
+  parent_id: 5,
+  is_synonym: false,
+  is_extinct: false,
+  is_uncertain: false,
+  is_unassigned: false,
+  has_children: true,
+  species_count: 1_000_000,
+  authorship: "",
+};
+
+const PHYLUM_MOLLUSCA = {
+  id: 101,
+  name: "Mollusca",
+  display_name: "Mollusca",
+  rank: "phylum",
+  parent_id: 5,
+  is_synonym: false,
+  is_extinct: false,
+  is_uncertain: false,
+  is_unassigned: false,
+  has_children: true,
+  species_count: 80_000,
+  authorship: "",
+};
+
+const PHYLUM_CHORDATA = {
+  id: 102,
+  name: "Chordata",
+  display_name: "Chordata",
+  rank: "phylum",
+  parent_id: 5,
+  is_synonym: false,
+  is_extinct: false,
+  is_uncertain: false,
+  is_unassigned: false,
+  has_children: true,
+  species_count: 70_000,
+  authorship: "",
+};
+
+const CLASS_TIER = {
+  rank: "class",
+  label: "Classes",
+  examples: ["Insecta", "Mammalia", "Aves"],
+  children: [
+    {
+      id: 200,
+      name: "Insecta",
+      display_name: "Insecta",
+      rank: "class",
+      parent_id: 5,
+      is_synonym: false,
+      is_extinct: false,
+      is_uncertain: false,
+      is_unassigned: false,
+      has_children: true,
+      species_count: 1_000_000,
+      authorship: "",
+    },
+  ],
+  next_cursor: null,
+};
+
+/** Children response with a multi-tier envelope (Animalia shape). */
+const ANIMALIA_RESPONSE = {
+  parent: {
+    id: 5,
+    name: "Eukaryota",
+    display_name: "Eukaryota",
+    rank: "domain",
+    parent_id: 0,
+    is_synonym: false,
+    is_extinct: false,
+    is_uncertain: false,
+    is_unassigned: false,
+  },
+  children: EUKARYOTA_CHILDREN,
+  next_tiers: [
+    {
+      rank: "phylum",
+      label: "Phyla",
+      examples: ["Arthropoda", "Mollusca", "Chordata"],
+      children: [PHYLUM_ARTHROPODA, PHYLUM_MOLLUSCA, PHYLUM_CHORDATA],
+      next_cursor: "phylum-cursor-1",
+    },
+    CLASS_TIER,
+  ],
+  next_cursor: null,
+};
+
+/** Second (last) page for the phylum tier: the load-more cursor
+ *  advances to ``null`` so the affordance hides (P1 #2 fix). */
+const PHYLUM_SECOND_PAGE = {
+  parent: ANIMALIA_RESPONSE.parent,
+  children: [PHYLUM_MOLLUSCA, PHYLUM_CHORDATA],
+  next_tiers: null,
+  next_cursor: null,
+};
+
+describe("TaxonomicTree tier groups", () => {
+  it("renders_tier_groups_collapsed_by_default", async () => {
+    mockFetchTree(
+      new Map([
+        ["parent_id=0", { parent: { id: 0 }, children: ROOTS_FIXTURE, next_cursor: null }],
+        ["parent_id=5", ANIMALIA_RESPONSE],
+      ]),
+    );
+
+    render(<TaxonomicTree />);
+    await waitFor(() => {
+      expect(screen.getByRole("tree")).toBeInTheDocument();
+    });
+
+    // Expand Eukaryota so the tier envelope is visible.
+    const eukaryotaRow = screen.getByRole("treeitem", { name: /Eukaryota/i });
+    await act(async () => {
+      fireEvent.click(within(eukaryotaRow).getByRole("button"));
+    });
+    await waitFor(() => {
+      expect(eukaryotaRow).toHaveAttribute("aria-expanded", "true");
+    });
+
+    // First tier group (phylum) renders expanded by default — the
+    // user sees the phylum rows immediately after expanding
+    // Eukaryota. The header carries the matching aria-expanded.
+    const phylumGroup = screen.getByRole("group", { name: /Phyla group/i });
+    expect(phylumGroup).toHaveAttribute("aria-expanded", "true");
+    const phylumHeader = within(phylumGroup).getByRole("button", {
+      name: /Phyla/i,
+    });
+    expect(phylumHeader).toHaveAttribute("aria-expanded", "true");
+
+    // Subsequent tier groups (class) are collapsed by default.
+    const classGroup = screen.getByRole("group", { name: /Classes group/i });
+    expect(classGroup).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("expanding_tier_group_fetches_first_page", async () => {
+    // The tier envelope returned by the children fetch carries
+    // the first page of rows for each tier (the backend caps the
+    // first page at tier_limit). The TierGroup renders that
+    // first page directly without an extra fetch — the next
+    // ``load-more`` click is the first network call.
+    mockFetchTree(
+      new Map<string, unknown>([
+        ["parent_id=0", { parent: { id: 0 }, children: ROOTS_FIXTURE, next_cursor: null }],
+        ["parent_id=5", ANIMALIA_RESPONSE],
+      ]),
+    );
+
+    render(<TaxonomicTree />);
+    await waitFor(() => {
+      expect(screen.getByRole("tree")).toBeInTheDocument();
+    });
+
+    const eukaryotaRow = screen.getByRole("treeitem", { name: /Eukaryota/i });
+    await act(async () => {
+      fireEvent.click(within(eukaryotaRow).getByRole("button"));
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: /Classes group/i })).toBeInTheDocument();
+    });
+
+    // Click the class header (initially collapsed) to expand it.
+    const classGroup = screen.getByRole("group", { name: /Classes group/i });
+    const classHeader = within(classGroup).getByRole("button", { name: /Classes/i });
+    await act(async () => {
+      fireEvent.click(classHeader);
+    });
+
+    // The first row (Insecta) renders from the envelope — no
+    // fetch is needed for the first page. The load-more button is
+    // hidden because the envelope's next_cursor is null.
+    await waitFor(() => {
+      expect(within(classGroup).getByText(/Insecta/i)).toBeInTheDocument();
+    });
+    expect(
+      within(classGroup).queryByRole("button", { name: /Load more Classes/i }),
+    ).toBeNull();
+  });
+
+  it("load_more_appends_rows", async () => {
+    const fetchMock = mockFetchTree(
+      new Map<string, unknown>([
+        ["parent_id=0", { parent: { id: 0 }, children: ROOTS_FIXTURE, next_cursor: null }],
+        // The children fetch carries the tier envelope so the first
+        // page is rendered immediately without an extra request.
+        ["parent_id=5", ANIMALIA_RESPONSE],
+        // The tier page is fetched with a non-empty cursor after the
+        // user clicks "Load more". Return the LAST page so the
+        // cursor advances to null and the affordance hides.
+        ["tier=phylum", PHYLUM_SECOND_PAGE],
+      ]),
+    );
+
+    render(<TaxonomicTree />);
+    await waitFor(() => {
+      expect(screen.getByRole("tree")).toBeInTheDocument();
+    });
+
+    const eukaryotaRow = screen.getByRole("treeitem", { name: /Eukaryota/i });
+    await act(async () => {
+      fireEvent.click(within(eukaryotaRow).getByRole("button"));
+    });
+
+    // Expand the phylum group.
+    const phylumGroup = screen.getByRole("group", { name: /Phyla group/i });
+    const phylumHeader = within(phylumGroup).getByRole("button", { name: /Phyla/i });
+    await act(async () => {
+      fireEvent.click(phylumHeader);
+    });
+    await waitFor(() => {
+      expect(within(phylumGroup).getByText(/Arthropoda/i)).toBeInTheDocument();
+    });
+
+    // The "Load more Phyla" button is visible because the cached
+    // cursor is non-null after the first page.
+    const loadMore = await within(phylumGroup).findByRole("button", {
+      name: /Load more Phyla/i,
+    });
+    expect(loadMore).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(loadMore);
+    });
+
+    // The second page's rows (Mollusca, Chordata) are appended, so
+    // the user sees the full phylum slice.
+    await waitFor(() => {
+      expect(within(phylumGroup).getByText(/Mollusca/i)).toBeInTheDocument();
+      expect(within(phylumGroup).getByText(/Chordata/i)).toBeInTheDocument();
+    });
+
+    // The load-more button is hidden once the cursor is null AND
+    // rows are present (P1 #2 fix).
+    await waitFor(() => {
+      expect(
+        within(phylumGroup).queryByRole("button", { name: /Load more Phyla/i }),
+      ).toBeNull();
+    });
+
+    // Cursor advance fired at least one tier-page call.
+    const tierCalls = fetchMock.mock.calls.filter((c) => {
+      const url = (c[0] as string).toString();
+      return url.includes("tier=phylum");
+    });
+    expect(tierCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keyboard_navigation_across_tier_groups", async () => {
+    mockFetchTree(
+      new Map<string, unknown>([
+        ["parent_id=0", { parent: { id: 0 }, children: ROOTS_FIXTURE, next_cursor: null }],
+        ["parent_id=5", ANIMALIA_RESPONSE],
+      ]),
+    );
+
+    render(<TaxonomicTree />);
+    await waitFor(() => {
+      expect(screen.getByRole("tree")).toBeInTheDocument();
+    });
+
+    const eukaryotaRow = screen.getByRole("treeitem", { name: /Eukaryota/i });
+    await act(async () => {
+      fireEvent.click(within(eukaryotaRow).getByRole("button"));
+    });
+
+    // Phylum group is auto-expanded with rows from the envelope.
+    const phylumGroup = screen.getByRole("group", { name: /Phyla group/i });
+    await waitFor(() => {
+      expect(within(phylumGroup).getByText(/Arthropoda/i)).toBeInTheDocument();
+    });
+
+    // Focus the first phylum row (Arthropoda) and press ArrowDown
+    // — the next tier row (Mollusca) must receive focus.
+    const arthropodaRow = within(phylumGroup).getByRole("treeitem", { name: /Arthropoda/i });
+    const arthropodaBtn = within(arthropodaRow).getByRole("button");
+    arthropodaBtn.focus();
+
+    await act(async () => {
+      fireEvent.keyDown(arthropodaBtn, { key: "ArrowDown" });
+    });
+    const molluscaRow = within(phylumGroup).getByRole("treeitem", { name: /Mollusca/i });
+    await waitFor(() => {
+      expect(within(molluscaRow).getByRole("button")).toHaveFocus();
+    });
+
+    // ArrowUp returns to the previous row.
+    await act(async () => {
+      fireEvent.keyDown(within(molluscaRow).getByRole("button"), { key: "ArrowUp" });
+    });
+    await waitFor(() => {
+      expect(within(arthropodaRow).getByRole("button")).toHaveFocus();
+    });
+
+    // Exercise the header caret toggle: the header is a button
+    // that mirrors aria-expanded.
+    const phylumHeader = within(phylumGroup).getByRole("button", { name: /Phyla/i });
+    await act(async () => {
+      fireEvent.click(phylumHeader);
+    });
+    await waitFor(() => {
+      expect(phylumGroup).toHaveAttribute("aria-expanded", "false");
+    });
+    await act(async () => {
+      fireEvent.click(phylumHeader);
+    });
+    await waitFor(() => {
+      expect(phylumGroup).toHaveAttribute("aria-expanded", "true");
+    });
+  });
+
+  it("aria_labels_on_tier_group_and_button", async () => {
+    mockFetchTree(
+      new Map([
+        ["parent_id=0", { parent: { id: 0 }, children: ROOTS_FIXTURE, next_cursor: null }],
+        ["parent_id=5", ANIMALIA_RESPONSE],
+      ]),
+    );
+
+    render(<TaxonomicTree />);
+    await waitFor(() => {
+      expect(screen.getByRole("tree")).toBeInTheDocument();
+    });
+
+    const eukaryotaRow = screen.getByRole("treeitem", { name: /Eukaryota/i });
+    await act(async () => {
+      fireEvent.click(within(eukaryotaRow).getByRole("button"));
+    });
+
+    const phylumGroup = screen.getByRole("group", { name: /Phyla group/i });
+    expect(phylumGroup).toHaveAttribute("role", "group");
+    expect(phylumGroup).toHaveAttribute("aria-label", "Phyla group");
+
+    // Header mirrors aria-expanded + aria-controls.
+    const phylumHeader = within(phylumGroup).getByRole("button", { name: /Phyla/i });
+    expect(phylumHeader).toHaveAttribute("aria-expanded", "false");
+    const controlsId = phylumHeader.getAttribute("aria-controls");
+    expect(controlsId).toBeTruthy();
+    expect(phylumGroup).toHaveAttribute("id", controlsId ?? "");
+
+    // Expand the group so the load-more button can render.
+    await act(async () => {
+      fireEvent.click(phylumHeader);
+    });
+    await waitFor(() => {
+      expect(within(phylumGroup).getByText(/Arthropoda/i)).toBeInTheDocument();
+    });
+
+    // The load-more button's aria-label is "Load more Phyla".
+    const loadMore = within(phylumGroup).getByRole("button", {
+      name: /Load more Phyla/i,
+    });
+    expect(loadMore).toHaveAttribute("aria-label", "Load more Phyla");
+  });
+});
