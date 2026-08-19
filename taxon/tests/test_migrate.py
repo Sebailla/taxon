@@ -118,10 +118,16 @@ def test_dry_run_reports_missing_tables(
     assert _tables(db) == set()
 
 
-def test_apply_creates_three_new_tables(
+def test_apply_creates_workspace_and_projection_tables(
     tmp_path: Path, env_with_pythonpath: dict[str, str]
 ) -> None:
-    """``apply`` creates the three workspace tables."""
+    """``apply`` creates the three workspace tables AND the projection table.
+
+    The descendant-counts-projection change widens ``apply`` so a fresh
+    DB boots with ``taxon_descendant_counts`` already on disk; the
+    read path's ``_table_exists`` fallback is still correct on legacy
+    DBs that pre-date the change, but the common case skips it.
+    """
     db = _fresh_db(tmp_path)
     completed = _run(
         ["apply", "--database-url", f"sqlite:///{db}"],
@@ -129,7 +135,12 @@ def test_apply_creates_three_new_tables(
     )
     assert completed.returncode == 0, f"apply must exit 0 on success; stderr={completed.stderr!r}"
     tables = _tables(db)
-    assert {"species_explored", "species_folders", "link_visited"}.issubset(tables)
+    assert {
+        "species_explored",
+        "species_folders",
+        "link_visited",
+        "taxon_descendant_counts",
+    }.issubset(tables)
 
 
 def test_apply_is_idempotent(tmp_path: Path, env_with_pythonpath: dict[str, str]) -> None:
@@ -359,3 +370,58 @@ def test_migrate_preserves_existing_indexes(
     with sqlite3.connect(db) as conn:
         row_count = conn.execute("SELECT COUNT(*) FROM taxa").fetchone()[0]
     assert row_count == 2, "apply must not delete rows"
+
+
+def test_apply_projection_populates_rows_on_bare_engine(
+    tmp_path: Path, env_with_pythonpath: dict[str, str]
+) -> None:
+    """``apply-projection`` runs the CTE on a bare engine.
+
+    This is the regression net for the ``taxonomy_display_level``
+    registration gap: ``taxon.migrate`` builds its engine without the
+    FastAPI factory's connect listener, so the recursive CTE in
+    :func:`taxon.api.projections.materialize_for_parent` raises
+    ``OperationalError: no such function`` unless the helper is wired.
+    The test seeds a tiny taxa table and runs the CLI on it; if the
+    helper lands, the materialiser writes zero rows (no parent above
+    the threshold) and exits 0. If the helper is missing, the
+    subprocess crashes with a non-zero exit code.
+    """
+    db = _fresh_db(tmp_path)
+    # Create the projection table (apply would do this, but we want
+    # this test to exercise the projection populator in isolation).
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE taxa ("
+            "id INTEGER PRIMARY KEY, "
+            "parent_id INTEGER REFERENCES taxa(id), "
+            "rank TEXT NOT NULL, "
+            "name TEXT NOT NULL, "
+            "display_name TEXT NOT NULL, "
+            "source_id TEXT NOT NULL UNIQUE, "
+            "display_level TEXT, "
+            "is_synonym INTEGER NOT NULL DEFAULT 0, "
+            "is_extinct INTEGER NOT NULL DEFAULT 0, "
+            "is_uncertain INTEGER NOT NULL DEFAULT 0, "
+            "is_unassigned INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        conn.executemany(
+            "INSERT INTO taxa (id, parent_id, rank, name, display_name, source_id, display_level) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (1, None, "kingdom", "Animalia", "Animalia", "worms:1", "kingdom"),
+                (2, 1, "phylum", "Chordata", "Chordata", "worms:2", "phylum"),
+            ],
+        )
+        conn.commit()
+
+    completed = _run(
+        ["apply-projection", "--threshold", "0", "--database-url", f"sqlite:///{db}"],
+        env_with_pythonpath,
+    )
+    assert completed.returncode == 0, (
+        f"apply-projection must exit 0 on a bare engine when register_display_level is wired; "
+        f"stderr={completed.stderr!r}"
+    )
+    assert "materialised" in completed.stdout.lower()

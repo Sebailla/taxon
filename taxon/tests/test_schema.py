@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Any, cast
 
 from sqlalchemy import Boolean, String, create_engine, inspect
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.schema import Column
 
 from taxon.schema import Base, SpeciesPath, Taxon, TaxonDescendantCount
 
@@ -113,7 +115,7 @@ def test_taxon_descendant_count_pk_is_taxon_id() -> None:
     integrity: a re-import that drops `taxa` rows cascades the
     projection rows via the FK relationship.
     """
-    pk_cols = list(TaxonDescendantCount.__table__.primary_key.columns)
+    pk_cols = cast(list[Column[Any]], list(TaxonDescendantCount.__table__.primary_key.columns))  # type: ignore[attr-defined]
     assert [col.name for col in pk_cols] == ["taxon_id"]
     fk_targets = {fk.target_fullname for fk in TaxonDescendantCount.__table__.foreign_keys}
     assert "taxa.id" in fk_targets

@@ -52,15 +52,12 @@ Test inventory (from design.md §RED-first test inventory):
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from taxon.schema import Base, Taxon, TaxonDescendantCount
-
+from taxon.schema import Taxon
 
 # ---------------------------------------------------------------------------
 # `taxonomy_display_level` registration gap
@@ -135,9 +132,11 @@ def test_register_display_level_fails_on_unregistered_engine() -> None:
     # failure mode is observed at the wire boundary.
     from sqlalchemy.exc import OperationalError as SAOperationalError
 
-    with pytest.raises((sqlite3.OperationalError, SAOperationalError)) as exc_info:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT taxonomy_display_level('species')")).one()
+    with (
+        pytest.raises((sqlite3.OperationalError, SAOperationalError)) as exc_info,
+        engine.connect() as conn,
+    ):
+        conn.execute(text("SELECT taxonomy_display_level('species')")).one()
     assert "taxonomy_display_level" in str(exc_info.value)
 
 
@@ -166,4 +165,3 @@ def _make_taxon(
     session.add(taxon)
     session.flush()
     return taxon
-
