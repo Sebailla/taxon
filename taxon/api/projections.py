@@ -243,7 +243,13 @@ def materialize_for_parent(
         existing.species_count = species_count
         existing.total_count = total_count
         existing.computed_at = now_iso
-    session.flush()
+    # Commit at the boundary so the row survives the request session
+    # close in ``taxon.api.db.get_db`` (``session.close()`` without
+    # ``session.commit()`` would roll the unit-of-work back). The
+    # commit also makes the row visible to subsequent reads within
+    # the same request — without it, the per-tier CTE walker that
+    # runs after this helper would not see the cached count.
+    session.commit()
     return species_count
 
 
